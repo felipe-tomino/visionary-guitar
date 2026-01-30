@@ -1,0 +1,38 @@
+{
+  "name": "visionary-guitar",
+  "version": "1.0.0",
+  "description": "Guitar scale visualization using real-time computer vision",
+  "scripts": {
+    "dev": "concurrently \"tsx watch --tsconfig tsconfig.node.json server.ts\" \"vite\"",
+    "build": "vite build && tsc -p tsconfig.node.json",
+    "start": "NODE_ENV=production tsx --tsconfig tsconfig.node.json server.ts",
+    "server": "tsx watch --tsconfig tsconfig.node.json server.ts"
+  },
+  "keywords": [
+    "guitar",
+    "scales",
+    "computer-vision",
+    "webrtc"
+  ],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.28.1",
+  "dependencies": {
+    "@roboflow/inference-sdk": "^0.1.13",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.5.4",
+    "autoprefixer": "^10.4.23",
+    "concurrently": "^9.0.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.3"
+  }
+}

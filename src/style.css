@@ -1,0 +1,178 @@
+@import "tailwindcss";
+
+/* Roboflow Design System - Custom Theme */
+@theme {
+  /* Font Family */
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: "SF Mono", monospace;
+
+  /* Aquavision (Brand Cyan) - Dark Mode Primary */
+  --color-aquavision-100: #CFFFF6;
+  --color-aquavision-300: #8AFFE8;
+  --color-aquavision-500: #00FFCE;
+  --color-aquavision-700: #00EBBE;
+  --color-aquavision-900: #00C29D;
+
+  /* Destructive (Red/Pink) */
+  --color-destructive: #FF6B6B;
+  --color-destructive-hover: #FF5252;
+
+  /* Success (Green) */
+  --color-success: #10b981;
+  --color-success-hover: #059669;
+
+  /* Custom shadows */
+  --shadow-aquavision: 0px 0px 8px 0px rgba(0, 255, 206, 0.25);
+  --shadow-aquavision-pressed: 0px 0px 8px 2px rgba(0, 255, 206, 0.5);
+}
+
+/* Base styles */
+body {
+  @apply font-sans antialiased;
+}
+
+/* Dark Mode Button - Primary (Roboflow dark-primary) */
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all;
+  @apply focus:outline-none focus:ring-2 focus:ring-aquavision-500 focus:ring-offset-2 focus:ring-offset-gray-900;
+  @apply disabled:cursor-not-allowed;
+}
+
+.btn-primary {
+  @apply border-none bg-aquavision-500 text-gray-900;
+  @apply hover:bg-aquavision-300 hover:shadow-aquavision;
+  @apply active:bg-aquavision-500 active:shadow-aquavision-pressed;
+  @apply disabled:bg-aquavision-500/20 disabled:text-gray-900;
+}
+
+.btn-secondary {
+  @apply border border-gray-500 bg-gray-900 text-gray-200;
+  @apply hover:border-gray-500 hover:bg-gray-800 hover:text-white;
+  @apply active:border-gray-500 active:bg-gray-900 active:text-white;
+  @apply disabled:border-gray-700 disabled:bg-gray-800 disabled:text-gray-600;
+}
+
+.btn-ghost {
+  @apply border-transparent bg-transparent text-gray-200;
+  @apply hover:border-gray-700 hover:bg-gray-700/50 hover:text-gray-100;
+  @apply active:bg-gray-700 active:text-white;
+  @apply disabled:text-gray-600;
+}
+
+/* Dark Mode Form Input (Roboflow .imagePreviewContainer.dark .form-input) */
+.dark-input {
+  @apply h-9 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white placeholder-gray-500 transition-colors;
+  @apply hover:bg-gray-800;
+  @apply focus:border-aquavision-500 focus:bg-gray-900 focus:outline-none focus:ring-0;
+  @apply disabled:cursor-not-allowed disabled:border-gray-700 disabled:bg-gray-800 disabled:text-gray-600;
+}
+
+/* Dark Mode Form Select */
+.dark-select {
+  @apply h-9 w-full cursor-pointer rounded-lg border border-gray-700 bg-gray-900 py-2 pl-3 pr-8 text-sm text-white transition-colors;
+  @apply hover:bg-gray-800;
+  @apply focus:border-aquavision-500 focus:bg-gray-900 focus:outline-none focus:ring-0;
+  @apply disabled:cursor-not-allowed disabled:border-gray-700 disabled:bg-gray-800 disabled:text-gray-600;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+}
+
+/* Dark Mode Range Input */
+input[type="range"] {
+  @apply h-2 w-full cursor-pointer appearance-none rounded-full bg-gray-700;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  @apply h-4 w-4 cursor-pointer appearance-none rounded-full bg-aquavision-500 shadow-aquavision transition-all;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  @apply bg-aquavision-300 shadow-aquavision-pressed;
+}
+
+input[type="range"]::-moz-range-thumb {
+  @apply h-4 w-4 cursor-pointer rounded-full border-none bg-aquavision-500 shadow-aquavision transition-all;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  @apply bg-aquavision-300 shadow-aquavision-pressed;
+}
+
+/* Status Indicator */
+.status-dot {
+  @apply h-2 w-2 rounded-full transition-colors duration-200;
+}
+
+.status-dot.connected {
+  @apply bg-success;
+}
+
+.status-dot.disconnected {
+  @apply bg-destructive;
+}
+
+/* Legend dots */
+.legend-dot {
+  @apply h-3 w-3 rounded-full;
+}
+
+.legend-dot.root {
+  @apply bg-destructive;
+}
+
+.legend-dot.scale {
+  @apply bg-aquavision-500;
+}
+
+/* Video container */
+.video-wrapper {
+  @apply relative flex w-full items-center justify-center overflow-hidden rounded-xl bg-black;
+}
+
+/* Inner container to keep video and canvas aligned */
+.video-inner {
+  @apply relative;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.video-inner video {
+  @apply block max-h-full max-w-full;
+  transform: scaleX(-1);
+}
+
+.video-inner canvas {
+  @apply pointer-events-none absolute left-0 top-0 h-full w-full;
+}
+
+/* Dark Card (Roboflow dark mode menu container style) */
+.dark-card {
+  @apply rounded-lg border border-white/10 bg-gray-800 p-3;
+}
+
+/* Controls toggle */
+#controls-toggle {
+  @apply cursor-pointer;
+}
+
+/* Collapsible controls */
+#controls-content {
+  @apply overflow-hidden transition-all duration-200;
+  max-height: 500px;
+}
+
+#controls-content.collapsed {
+  @apply max-h-0 opacity-0;
+}
+
+#controls-chevron.collapsed {
+  @apply -rotate-90;
+}
+
+/* Form label in dark mode */
+.dark-label {
+  @apply text-xs font-medium text-gray-400;
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visionary Guitar - Scale Visualization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body class="min-h-screen bg-gray-800">
+  <div class="flex min-h-screen flex-col p-2 sm:p-4">
+    <!-- Header (above video) -->
+    <header class="mb-2 flex items-center justify-between">
+      <h1 class="text-lg font-semibold text-white">Visionary Guitar</h1>
+      <span class="text-xs text-gray-500">Scale visualization powered by AI</span>
+    </header>
+
+    <!-- Video Container (full width) -->
+    <div class="video-wrapper flex-1">
+      <div class="video-inner">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <!-- Controls Panel (top right, collapsible) -->
+      <div class="absolute right-3 top-3 z-10 w-60">
+        <div class="dark-card">
+          <!-- Collapse Toggle -->
+          <button id="controls-toggle" class="flex w-full items-center justify-between text-left">
+            <span class="text-xs font-medium text-gray-300">Controls</span>
+            <svg id="controls-chevron" class="h-4 w-4 text-gray-400 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          <!-- Collapsible Content -->
+          <div id="controls-content">
+            <!-- Divider -->
+            <div class="mb-3 mt-2 border-t border-gray-700"></div>
+            <div class="flex flex-col gap-3">
+              <!-- Camera Select -->
+              <div class="flex flex-col gap-1">
+                <label for="camera-select" class="dark-label">Camera</label>
+                <select id="camera-select" class="dark-select">
+                  <option value="">Select camera...</option>
+                </select>
+              </div>
+
+              <!-- Scale & Root Note (same row) -->
+              <div class="flex gap-2">
+                <div class="flex flex-1 flex-col gap-1">
+                  <label for="scale-select" class="dark-label">Scale</label>
+                  <select id="scale-select" class="dark-select"></select>
+                </div>
+                <div class="flex w-16 flex-col gap-1">
+                  <label for="root-select" class="dark-label">Root</label>
+                  <select id="root-select" class="dark-select"></select>
+                </div>
+              </div>
+
+              <!-- Tuning Select -->
+              <div class="flex flex-col gap-1">
+                <label for="tuning-select" class="dark-label">Tuning</label>
+                <select id="tuning-select" class="dark-select"></select>
+              </div>
+
+              <!-- Fret Count -->
+              <div class="flex flex-col gap-1">
+                <label for="fret-count" class="dark-label">
+                  Frets: <span id="fret-count-value" class="text-white">12</span>
+                </label>
+                <input type="range" id="fret-count" min="5" max="24" value="12">
+              </div>
+
+              <!-- Detect Guitar Button -->
+              <button id="detect-btn" class="btn btn-secondary w-full" disabled>
+                Detect Guitar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status & Connect (bottom right) -->
+      <div class="absolute bottom-3 right-3 z-10">
+        <div class="dark-card">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+              <span id="status-indicator" class="status-dot disconnected"></span>
+              <span id="status-text" class="text-sm text-gray-300">Disconnected</span>
+            </div>
+            <button id="connect-btn" class="btn btn-primary">
+              Connect
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legend (bottom left) -->
+      <div class="absolute bottom-3 left-3 z-10">
+        <div class="dark-card">
+          <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2">
+              <span class="legend-dot root"></span>
+              <span class="text-sm text-gray-300">Root</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="legend-dot scale"></span>
+              <span class="text-sm text-gray-300">Scale</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
