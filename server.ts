@@ -1,11 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { join } from 'path';
 import { InferenceHTTPClient } from '@roboflow/inference-sdk';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,7 +10,7 @@ app.use(express.json());
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(join(__dirname, 'dist')));
+  app.use(express.static(join(process.cwd(), 'dist')));
 }
 
 // WebRTC proxy endpoint

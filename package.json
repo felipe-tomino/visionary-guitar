@@ -4,7 +4,7 @@
   "description": "Guitar scale visualization using real-time computer vision",
   "scripts": {
     "dev": "concurrently \"tsx watch --tsconfig tsconfig.node.json server.ts\" \"vite\"",
-    "build": "vite build && tsc -p tsconfig.node.json",
+    "build": "vite build",
     "start": "NODE_ENV=production tsx --tsconfig tsconfig.node.json server.ts",
     "server": "tsx watch --tsconfig tsconfig.node.json server.ts"
   },
