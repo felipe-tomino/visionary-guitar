@@ -163,11 +163,11 @@ function renderDetectionLegend(ctx: CanvasRenderingContext2D, canvasWidth: numbe
     ctx.fillStyle = '#fff';
     ctx.fillText('Calculated', canvasWidth - 145, 32);
 
-    // Red = Nut
+    // Red = Fret 0
     ctx.fillStyle = '#FF6B6B';
     ctx.fillRect(canvasWidth - 170, 45, 20, 3);
     ctx.fillStyle = '#fff';
-    ctx.fillText('Nut', canvasWidth - 145, 47);
+    ctx.fillText('Fret 0', canvasWidth - 145, 47);
   }
 
   ctx.restore();
@@ -202,7 +202,7 @@ function renderCalibratingStatus(ctx: CanvasRenderingContext2D, state: Fretboard
     message = 'Looking for soundhole...';
     subMessage = `Frets: ${state.detectedFretPositions.length} - Show guitar body`;
   } else if (state.soundholeX > 0) {
-    message = 'Looking for nut...';
+    message = 'Looking for headstock...';
     subMessage = 'Show the headstock area';
   }
 
@@ -266,7 +266,7 @@ function renderDetectedLandmarks(
     ctx.fillStyle = '#FF6B6B';
     ctx.font = 'bold 10px Inter, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('NUT', nutMirrorX, state.detectedNutY.top - 8);
+    ctx.fillText('FRET 0', nutMirrorX, state.detectedNutY.top - 8);
   }
 
   // Draw detected fret wires (yellow vertical lines)
