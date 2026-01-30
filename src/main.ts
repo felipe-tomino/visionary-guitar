@@ -182,7 +182,7 @@ function initializeUI(): void {
 
   connectBtn.addEventListener('click', toggleConnection);
 
-  // Detect guitar button
+  // Reset detection button
   detectBtn.addEventListener('click', resetDetection);
 
   // Controls panel collapse toggle
@@ -203,6 +203,8 @@ function updateStatus(connected: boolean, message: string): void {
   statusIndicator.className = `status-dot ${connected ? 'connected' : 'disconnected'}`;
   statusText.textContent = message;
   connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
+  connectBtn.classList.toggle('btn-primary', !connected);
+  connectBtn.classList.toggle('btn-destructive', connected);
   updateDetectButton();
 }
 
@@ -235,13 +237,13 @@ function updateDetectButton(): void {
 
   if (!isConnected) {
     detectBtn.disabled = true;
-    detectBtn.textContent = 'Detect Guitar';
+    detectBtn.textContent = 'Reset Detection';
   } else if (isDetecting) {
     detectBtn.disabled = true;
     detectBtn.textContent = 'Detecting...';
   } else {
     detectBtn.disabled = false;
-    detectBtn.textContent = 'Detect Guitar';
+    detectBtn.textContent = 'Reset Detection';
   }
 }
 

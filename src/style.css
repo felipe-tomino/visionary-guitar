@@ -52,6 +52,13 @@ body {
   @apply disabled:border-gray-700 disabled:bg-gray-800 disabled:text-gray-600;
 }
 
+.btn-destructive {
+  @apply border-none bg-destructive text-white;
+  @apply hover:bg-destructive-hover;
+  @apply active:bg-destructive;
+  @apply disabled:bg-destructive/20 disabled:text-white/50;
+}
+
 .btn-ghost {
   @apply border-transparent bg-transparent text-gray-200;
   @apply hover:border-gray-700 hover:bg-gray-700/50 hover:text-gray-100;
@@ -160,12 +167,12 @@ input[type="range"]::-moz-range-thumb:hover {
 
 /* Collapsible controls */
 #controls-content {
-  @apply overflow-hidden transition-all duration-200;
+  @apply overflow-visible transition-all duration-200;
   max-height: 500px;
 }
 
 #controls-content.collapsed {
-  @apply max-h-0 opacity-0;
+  @apply max-h-0 overflow-hidden opacity-0;
 }
 
 #controls-chevron.collapsed {
@@ -175,4 +182,19 @@ input[type="range"]::-moz-range-thumb:hover {
 /* Form label in dark mode */
 .dark-label {
   @apply text-xs font-medium text-gray-400;
+}
+
+/* Tooltip */
+.tooltip {
+  @apply relative;
+}
+
+.tooltip::after {
+  content: attr(data-tooltip);
+  @apply pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-48 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-xs text-gray-300 opacity-0 shadow-lg transition-opacity duration-200;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tooltip:hover::after {
+  @apply opacity-100;
 }
