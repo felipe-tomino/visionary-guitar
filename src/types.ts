@@ -48,9 +48,9 @@ export interface FretboardGeometry {
   fretboardLength: number; // X distance from nut to last fret (learned)
   scaleLength: number; // calculated scale length of the guitar
   isLocked: boolean;
-  // Time-based stability tracking
-  stableStartTime: number; // timestamp when stable measurements started
-  lastMeasurement: { nutWidth: number; taperRatio: number };
+  // Time-based stability tracking (based on fret count)
+  stableStartTime: number; // timestamp when stable fret count started
+  lastStableFretCount: number; // last fret count that was stable
   // Tracking during calibration
   maxFretsSeen: number;
   lastFretX: number; // X position of the furthest fret from nut (during calibration)
@@ -72,6 +72,10 @@ export interface FretboardState {
 
   // Calculated from geometry
   fretPositions: number[]; // X positions of each fret wire
+
+  // Raw detected positions (for rendering during calibration)
+  detectedFretPositions: number[]; // X positions of detected fret wires
+  detectedNutY: { top: number; bottom: number }; // Y bounds of detected nut
 
   lastUpdateTime: number;
   isValid: boolean;

@@ -22,12 +22,21 @@ export function renderOverlay(
 ): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
+  const canvasWidth = ctx.canvas.width;
+
+  // Only show detection visualizations during calibration
   if (!fretboardState.isValid) {
-    renderCalibrating(ctx, fretboardState);
+    renderDetectedLandmarks(ctx, fretboardState, canvasWidth);
+    renderDetectionLegend(ctx, canvasWidth, fretboardState.isValid);
+    renderCalibratingStatus(ctx, fretboardState, canvasWidth);
     return;
   }
 
-  const canvasWidth = ctx.canvas.width;
+  // After calibration: disable debug visualizations
+  // Uncomment these lines to show them again for debugging:
+  // renderDetectedLandmarks(ctx, fretboardState, canvasWidth);
+  // renderDetectionLegend(ctx, canvasWidth, fretboardState.isValid);
+  // renderCalculatedFrets(ctx, fretboardState, canvasWidth);
 
   // Optionally draw fret numbers
   if (showFretNumbers && fretboardState.fretPositions.length > 0) {
@@ -124,54 +133,177 @@ function renderFretNumbers(
 
 const GEOMETRY_STABLE_TIME_MS = 1500; // Must match fretboard.ts
 
-function renderCalibrating(ctx: CanvasRenderingContext2D, state: FretboardState): void {
+function renderDetectionLegend(ctx: CanvasRenderingContext2D, canvasWidth: number, isCalibrated: boolean): void {
   ctx.save();
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  // Background for legend
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(canvasWidth - 180, 5, 175, isCalibrated ? 55 : 35);
+
+  ctx.font = '10px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  // Yellow = Detected
+  ctx.fillStyle = '#FFD700';
+  ctx.fillRect(canvasWidth - 170, 15, 20, 3);
+  ctx.fillStyle = '#fff';
+  ctx.fillText('Detected', canvasWidth - 145, 17);
+
+  // Green dashed = Calculated (only show when calibrated)
+  if (isCalibrated) {
+    ctx.strokeStyle = 'rgba(0, 255, 100, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(canvasWidth - 170, 32);
+    ctx.lineTo(canvasWidth - 150, 32);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Calculated', canvasWidth - 145, 32);
+
+    // Red = Nut
+    ctx.fillStyle = '#FF6B6B';
+    ctx.fillRect(canvasWidth - 170, 45, 20, 3);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Nut', canvasWidth - 145, 47);
+  }
+
+  ctx.restore();
+}
+
+function renderCalibratingStatus(ctx: CanvasRenderingContext2D, state: FretboardState, canvasWidth: number): void {
+  // Draw status message at top
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, canvasWidth, 80);
 
   ctx.fillStyle = '#fff';
-  ctx.font = '18px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.font = '16px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   let message = 'Position your guitar in frame';
   let subMessage = '';
-  let debugInfo = '';
 
   // Show calibration progress
   if (state.nutX > 0 && state.soundholeX > 0) {
     if (!state.geometry.isLocked && state.geometry.stableStartTime > 0) {
       const elapsed = Date.now() - state.geometry.stableStartTime;
       const progress = Math.min(100, Math.round((elapsed / GEOMETRY_STABLE_TIME_MS) * 100));
-      message = 'Learning fretboard geometry...';
-      subMessage = `${progress}% - hold still`;
-      debugInfo = `Frets: ${state.geometry.maxFretsSeen} | Width: ${Math.round(state.geometry.nutWidth)}px`;
+      message = `Learning geometry... ${progress}%`;
+      subMessage = `Frets detected: ${state.geometry.maxFretsSeen} - Hold still`;
     } else if (!state.geometry.isLocked) {
       message = 'Detecting fretboard...';
-      subMessage = 'Hold guitar steady';
-      debugInfo = `Nut: ✓ | Soundhole: ✓ | Frets: ${state.geometry.maxFretsSeen}`;
+      subMessage = `Frets: ${state.geometry.maxFretsSeen} - Hold steady`;
     }
   } else if (state.nutX > 0) {
     message = 'Looking for soundhole...';
-    subMessage = 'Show more of the guitar body';
-    debugInfo = `Nut: ✓ | Frets: ${state.geometry.maxFretsSeen}`;
+    subMessage = `Frets: ${state.detectedFretPositions.length} - Show guitar body`;
   } else if (state.soundholeX > 0) {
     message = 'Looking for nut...';
     subMessage = 'Show the headstock area';
   }
 
-  ctx.fillText(message, ctx.canvas.width / 2, ctx.canvas.height / 2);
+  ctx.fillText(message, canvasWidth / 2, 30);
 
   if (subMessage) {
-    ctx.font = '14px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.font = '12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#aaa';
-    ctx.fillText(subMessage, ctx.canvas.width / 2, ctx.canvas.height / 2 + 30);
+    ctx.fillText(subMessage, canvasWidth / 2, 55);
   }
 
-  if (debugInfo) {
-    ctx.font = '12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillStyle = '#666';
-    ctx.fillText(debugInfo, ctx.canvas.width / 2, ctx.canvas.height / 2 + 55);
+  ctx.restore();
+}
+
+// Render calculated fret positions (green) for comparison with detected (yellow)
+// Currently disabled but kept for debugging - uncomment call in renderOverlay to use
+export function renderCalculatedFrets(
+  ctx: CanvasRenderingContext2D,
+  state: FretboardState,
+  canvasWidth: number
+): void {
+  if (state.fretPositions.length === 0) return;
+
+  const fretHeight = state.detectedNutY.bottom - state.detectedNutY.top;
+  if (fretHeight <= 0) return;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0, 255, 100, 0.6)'; // Green for calculated
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]); // Dashed line to distinguish from detected
+
+  state.fretPositions.forEach((fretX) => {
+    const mirroredX = mirrorX(fretX, canvasWidth);
+    ctx.beginPath();
+    ctx.moveTo(mirroredX, state.nutCenterY - fretHeight / 2);
+    ctx.lineTo(mirroredX, state.nutCenterY + fretHeight / 2);
+    ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
+function renderDetectedLandmarks(
+  ctx: CanvasRenderingContext2D,
+  state: FretboardState,
+  canvasWidth: number
+): void {
+  ctx.save();
+
+  // Draw detected nut (red vertical line)
+  if (state.nutX > 0 && state.detectedNutY.top !== state.detectedNutY.bottom) {
+    ctx.strokeStyle = '#FF6B6B';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    const nutMirrorX = mirrorX(state.nutX, canvasWidth);
+    ctx.moveTo(nutMirrorX, state.detectedNutY.top);
+    ctx.lineTo(nutMirrorX, state.detectedNutY.bottom);
+    ctx.stroke();
+
+    // Label
+    ctx.fillStyle = '#FF6B6B';
+    ctx.font = 'bold 10px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('NUT', nutMirrorX, state.detectedNutY.top - 8);
+  }
+
+  // Draw detected fret wires (yellow vertical lines)
+  if (state.detectedFretPositions.length > 0 && state.detectedNutY.top !== state.detectedNutY.bottom) {
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 2;
+
+    const fretHeight = state.detectedNutY.bottom - state.detectedNutY.top;
+
+    state.detectedFretPositions.forEach((fretX, index) => {
+      const mirroredX = mirrorX(fretX, canvasWidth);
+      ctx.beginPath();
+      ctx.moveTo(mirroredX, state.nutCenterY - fretHeight / 2);
+      ctx.lineTo(mirroredX, state.nutCenterY + fretHeight / 2);
+      ctx.stroke();
+
+      // Fret number label
+      ctx.fillStyle = '#FFD700';
+      ctx.font = '10px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText((index + 1).toString(), mirroredX, state.nutCenterY - fretHeight / 2 - 8);
+    });
+  }
+
+  // Draw detected soundhole (cyan circle indicator)
+  if (state.soundholeX > 0) {
+    ctx.strokeStyle = '#00FFCE';
+    ctx.lineWidth = 2;
+    const shMirrorX = mirrorX(state.soundholeX, canvasWidth);
+    ctx.beginPath();
+    ctx.arc(shMirrorX, state.soundholeCenterY, 20, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#00FFCE';
+    ctx.font = 'bold 10px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('BODY', shMirrorX, state.soundholeCenterY - 30);
   }
 
   ctx.restore();
