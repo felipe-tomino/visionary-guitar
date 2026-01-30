@@ -218,7 +218,13 @@ function resetDetection(): void {
   // Reset the fretboard state to trigger re-detection
   fretboardState = createInitialFretboardState();
   appState.fretCountOverride = false;
-  fretCountValue.textContent = appState.fretCount.toString();
+
+  // Reset slider to default range
+  fretCountInput.max = '24';
+  appState.fretCount = 12;
+  fretCountInput.value = '12';
+  fretCountValue.textContent = '12';
+
   ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
   updateDetectButton();
 }
@@ -249,9 +255,12 @@ async function toggleConnection(): Promise<void> {
     fretboardState = createInitialFretboardState();
     ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-    // Reset fret count display and override flag
+    // Reset fret count slider to default
     appState.fretCountOverride = false;
-    fretCountValue.textContent = appState.fretCount.toString();
+    fretCountInput.max = '24';
+    appState.fretCount = 12;
+    fretCountInput.value = '12';
+    fretCountValue.textContent = '12';
 
     // Restart preview with local stream
     await startPreview();
@@ -373,22 +382,35 @@ function render(): void {
   const scale = scales[appState.selectedScale];
   if (!scale) return;
 
-  // Use user's fret count if they manually changed it, otherwise use detected count
-  const effectiveFretCount = appState.fretCountOverride
-    ? appState.fretCount
-    : fretboardState.geometry.isLocked
-      ? fretboardState.geometry.fretCount
-      : appState.fretCount;
+  // After calibration, update slider max to detected fret count
+  if (fretboardState.geometry.isLocked) {
+    const detectedFrets = fretboardState.geometry.fretCount;
 
-  // Update UI to show detected fret count (only if user hasn't overridden)
-  if (fretboardState.geometry.isLocked && !appState.fretCountOverride) {
-    fretCountValue.textContent = `${fretboardState.geometry.fretCount} (detected)`;
+    // Update slider max value to detected count
+    if (parseInt(fretCountInput.max) !== detectedFrets) {
+      fretCountInput.max = detectedFrets.toString();
+
+      // If current value exceeds new max, clamp it
+      if (appState.fretCount > detectedFrets) {
+        appState.fretCount = detectedFrets;
+        fretCountInput.value = detectedFrets.toString();
+      }
+
+      // Set initial value to max (show all frets) if user hasn't manually adjusted
+      if (!appState.fretCountOverride) {
+        appState.fretCount = detectedFrets;
+        fretCountInput.value = detectedFrets.toString();
+      }
+    }
   }
+
+  // Update the fret count display
+  fretCountValue.textContent = appState.fretCount.toString();
 
   const notePositions = calculateNotePositions(
     fretboardState,
     appState.selectedTuning,
-    effectiveFretCount
+    appState.fretCount
   );
 
   renderOverlay(

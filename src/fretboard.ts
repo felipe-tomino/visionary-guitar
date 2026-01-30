@@ -4,8 +4,10 @@ import { tunings, getNoteAtFret } from './tunings';
 const CONFIDENCE_THRESHOLD = 0.3;
 const FRET_CONFIDENCE_THRESHOLD = 0.65; // Higher confidence for fret wires to avoid false positives
 const FRET_RATIO = Math.pow(2, -1 / 12); // ~0.9439
-const ANCHOR_SMOOTHING = 0.6; // smoothing for real-time nut tracking
-const SCALE_SMOOTHING = 0.4; // smoothing for height scale factor
+const ANCHOR_SMOOTHING = 0.6; // smoothing for real-time X position tracking
+const Y_ANCHOR_SMOOTHING = 0.6; // smoothing for Y positions (lower = smoother)
+const ANGLE_SMOOTHING = 0.2; // smoothing for axis angle (lower = smoother)
+const SCALE_SMOOTHING = 0.3; // smoothing for height scale factor
 const FRET_POSITION_SMOOTHING = 0.6; // smoothing for fret X positions to prevent jumping
 const NUT_STABILITY_THRESHOLD = 5; // pixels - if nut moves less than this, consider guitar stable
 const STRING_SPREAD_MARGIN = 0.9; // reduce string spread to stay within fretboard (1.0 = full width)
@@ -64,9 +66,9 @@ function getPolygonHeight(points: Point[]): number {
 }
 
 // Smooth anchor position for real-time tracking (follows movement, no rejection)
-function smoothAnchor(current: number, newValue: number): number {
+function smoothAnchor(current: number, newValue: number, factor: number = ANCHOR_SMOOTHING): number {
   if (current === 0) return newValue;
-  return current + (newValue - current) * ANCHOR_SMOOTHING;
+  return current + (newValue - current) * factor;
 }
 
 // Fit a line through points and return the angle (using linear regression)
@@ -95,86 +97,121 @@ function fitLineAngle(points: Point[]): number {
   return Math.atan(slope);
 }
 
+// Calculate expected first fret spacing from geometry
+function calculateFirstFretSpacing(geometry: FretboardGeometry): number {
+  if (!geometry.isLocked || geometry.fretboardLength <= 0 || geometry.fretCount <= 0) {
+    return 0;
+  }
+  // fretboardLength = firstSpacing * (1 - FRET_RATIO^fretCount) / (1 - FRET_RATIO)
+  // Solve for firstSpacing:
+  const seriesSum = (1 - Math.pow(FRET_RATIO, geometry.fretCount)) / (1 - FRET_RATIO);
+  return geometry.fretboardLength / seriesSum;
+}
+
 // Analyze detected fret positions and interpolate missing frets
-// Key constraint: fret spacing ALWAYS decreases (each spacing = previous * FRET_RATIO)
-// If we see a spacing >= previous spacing, frets are missing
+// Uses real-time detections directly, only interpolates gaps where frets are clearly missing
 function analyzeAndInterpolateFrets(
   nutX: number,
   detectedPositions: number[],
-  maxFrets: number = 24 // Safety cap
+  maxFrets: number = 24, // Safety cap
+  referenceFirstFretSpacing: number = 0 // Known first fret spacing from geometry (0 = derive from detections)
 ): { count: number; positions: number[] } {
   if (detectedPositions.length === 0) return { count: 0, positions: [] };
   if (detectedPositions.length === 1) return { count: 1, positions: [...detectedPositions] };
 
-  // Positions should already be sorted from nut to body (descending X)
-  const firstSpacing = nutX - detectedPositions[0];
-  if (firstSpacing <= 0) return { count: detectedPositions.length, positions: [...detectedPositions] };
-
-  // Build interpolated positions using the constraint that spacing always decreases
-  const interpolatedPositions: number[] = [];
-  let expectedSpacing = firstSpacing; // Start with first fret spacing
+  // Positions are sorted from nut to body (descending X)
+  const resultPositions: number[] = [];
   let prevX = nutX;
+
+  // Track expected single-fret spacing (decreases by FRET_RATIO each fret)
+  // Use reference spacing if provided (from known geometry), otherwise derive from first detection
+  const firstGap = nutX - detectedPositions[0];
+  let expectedNextFretSpacing: number;
+
+  if (referenceFirstFretSpacing > 0) {
+    // Use known geometry - this is stable even when first frets are occluded
+    expectedNextFretSpacing = referenceFirstFretSpacing;
+  } else {
+    // Derive from first detected gap (used during calibration)
+    expectedNextFretSpacing = firstGap;
+  }
 
   for (let i = 0; i < detectedPositions.length; i++) {
     const detectedX = detectedPositions[i];
-    const actualSpacing = prevX - detectedX;
+    const gapSize = prevX - detectedX;
 
-    // Calculate how many frets this gap represents
-    // Key rule: spacing should decrease. If actual >= expected, frets are missing
-    let fretGaps = 1;
+    // Safety: gap must be positive and meaningful
+    if (gapSize <= 0) continue;
 
-    // Only interpolate if spacing is significantly larger than expected
-    if (actualSpacing > expectedSpacing * 1.3) {
-      // Use geometric series: find n where sum of n spacings ≈ actualSpacing
-      // Sum = expectedSpacing * (1 - FRET_RATIO^n) / (1 - FRET_RATIO)
-      // Solve for n: n = log(1 - actualSpacing * (1 - FRET_RATIO) / expectedSpacing) / log(FRET_RATIO)
-      const ratio = actualSpacing / expectedSpacing;
-      fretGaps = Math.round(ratio);
-      fretGaps = Math.max(1, Math.min(fretGaps, 4)); // Cap between 1 and 4
+    // How many frets fit in this gap?
+    // Calculate expected gaps for each fret count and find the best match
+    let numFrets = 1;
+
+    for (let n = 1; n <= 6; n++) {
+      // Expected gap for n frets using geometric series: s * (1 - r^n) / (1 - r)
+      const expectedGapN = expectedNextFretSpacing * (1 - Math.pow(FRET_RATIO, n)) / (1 - FRET_RATIO);
+      const expectedGapN1 = expectedNextFretSpacing * (1 - Math.pow(FRET_RATIO, n + 1)) / (1 - FRET_RATIO);
+
+      // If actual gap is less than expected for n frets, use n (or previous)
+      if (gapSize < expectedGapN * 0.85) {
+        // Gap is smaller than 85% of expected for n frets - use n-1 or minimum 1
+        numFrets = Math.max(1, n - 1);
+        break;
+      }
+
+      // If gap is between expected for n and n+1, decide which is closer
+      // Use a threshold at 40% between n and n+1 (bias toward more frets)
+      const threshold = expectedGapN + (expectedGapN1 - expectedGapN) * 0.4;
+
+      if (gapSize < threshold) {
+        numFrets = n;
+        break;
+      }
+
+      // Gap is larger, continue to check n+1
+      numFrets = n + 1;
     }
 
-    // Safety: don't exceed max frets
-    if (interpolatedPositions.length + fretGaps > maxFrets) {
-      fretGaps = Math.max(1, maxFrets - interpolatedPositions.length);
-    }
+    // Safety cap
+    numFrets = Math.max(1, Math.min(numFrets, 6));
 
-    if (fretGaps === 1) {
-      // Single fret - use detected position
-      interpolatedPositions.push(detectedX);
-      // Update expected spacing for next iteration (should decrease)
-      expectedSpacing = actualSpacing * FRET_RATIO;
+    if (numFrets === 1) {
+      // Single fret - use detection directly
+      resultPositions.push(detectedX);
+      // Update expected spacing for next fret (it should decrease by FRET_RATIO)
+      expectedNextFretSpacing = gapSize * FRET_RATIO;
     } else {
-      // Multiple frets - interpolate missing ones using geometric progression
-      const gapStartX = prevX;
-      const gapEndX = detectedX;
-      const totalRatioSum = (1 - Math.pow(FRET_RATIO, fretGaps)) / (1 - FRET_RATIO);
+      // Multiple frets - interpolate the missing ones using geometric progression
+      const totalRatioSum = (1 - Math.pow(FRET_RATIO, numFrets)) / (1 - FRET_RATIO);
+      const firstFretInGapSpacing = gapSize / totalRatioSum;
 
-      for (let j = 1; j <= fretGaps; j++) {
-        if (interpolatedPositions.length >= maxFrets) break;
+      for (let j = 1; j <= numFrets; j++) {
+        // Calculate cumulative distance for fret j
+        let accumulatedRatio = 0;
+        for (let k = 0; k < j; k++) {
+          accumulatedRatio += Math.pow(FRET_RATIO, k);
+        }
+        const t = accumulatedRatio / totalRatioSum;
+        const interpolatedX = prevX - gapSize * t;
 
-        if (j < fretGaps) {
-          let accumulatedRatio = 0;
-          for (let k = 0; k < j; k++) {
-            accumulatedRatio += Math.pow(FRET_RATIO, k);
-          }
-          const t = accumulatedRatio / totalRatioSum;
-          interpolatedPositions.push(gapStartX - (gapStartX - gapEndX) * t);
+        // Last fret should be the actual detection to anchor properly
+        if (j === numFrets) {
+          resultPositions.push(detectedX);
         } else {
-          interpolatedPositions.push(detectedX);
+          resultPositions.push(interpolatedX);
         }
       }
 
-      // Update expected spacing for next iteration
-      expectedSpacing = (actualSpacing / fretGaps) * FRET_RATIO;
+      // Update expected spacing: after adding numFrets, next fret spacing continues the progression
+      expectedNextFretSpacing = firstFretInGapSpacing * Math.pow(FRET_RATIO, numFrets);
     }
 
     prevX = detectedX;
 
-    // Safety check
-    if (interpolatedPositions.length >= maxFrets) break;
+    if (resultPositions.length >= maxFrets) break;
   }
 
-  return { count: interpolatedPositions.length, positions: interpolatedPositions };
+  return { count: resultPositions.length, positions: resultPositions };
 }
 
 // Smooth fret positions between frames to prevent jumping
@@ -317,7 +354,7 @@ export function processPredictions(
     const scaledNut = scalePoints(nut.points, scaleX, scaleY);
     const centroid = getCentroid(scaledNut);
     newState.nutX = smoothAnchor(state.nutX, centroid.x);
-    newState.nutCenterY = smoothAnchor(state.nutCenterY, centroid.y);
+    newState.nutCenterY = smoothAnchor(state.nutCenterY, centroid.y, Y_ANCHOR_SMOOTHING);
     axisPoints.push({ x: centroid.x, y: centroid.y });
 
     // Store Y bounds for rendering during calibration
@@ -348,14 +385,14 @@ export function processPredictions(
     // During calibration, track the fretboard end position (edge of soundhole)
     if (!state.geometry.isLocked) {
       newState.soundholeX = smoothAnchor(state.soundholeX, fretboardEndPoint.x);
-      newState.soundholeCenterY = smoothAnchor(state.soundholeCenterY, fretboardEndPoint.y);
+      newState.soundholeCenterY = smoothAnchor(state.soundholeCenterY, fretboardEndPoint.y, Y_ANCHOR_SMOOTHING);
     }
   }
 
   // === CALCULATE AXIS ANGLE from all detected points (real-time) ===
   if (axisPoints.length >= 2) {
     const angle = fitLineAngle(axisPoints);
-    newState.axisAngle = smoothAnchor(state.axisAngle, angle);
+    newState.axisAngle = smoothAnchor(state.axisAngle, angle, ANGLE_SMOOTHING);
   }
 
   // === CALCULATE SOUNDHOLE POSITION (after geometry locked) ===
@@ -544,11 +581,15 @@ export function processPredictions(
       const nutDelta = newState.nutX - state.nutX;
       newState.fretPositions = state.fretPositions.map(x => x + nutDelta);
     } else if (newState.nutX > 0 && detectedFretPositions.length > 0) {
-      // Guitar moved - recalculate from detections
+      // Guitar moved - use detections with interpolation for missing frets
+      // Use known geometry to calculate expected first fret spacing (stable reference)
+      const referenceSpacing = calculateFirstFretSpacing(state.geometry);
+
       const { positions: interpolatedPositions } = analyzeAndInterpolateFrets(
         newState.nutX,
         detectedFretPositions,
-        state.geometry.fretCount
+        state.geometry.fretCount,
+        referenceSpacing
       );
 
       // Extend to known fret count if last frets are not visible
