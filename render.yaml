@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: visionary-guitar
+    runtime: node
+    buildCommand: pnpm install && pnpm build
+    startCommand: pnpm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ROBOFLOW_API_KEY
+        sync: false # You'll set this manually in the dashboard
