@@ -42,7 +42,7 @@ export interface NotePosition {
 
 // Learned fretboard geometry - locked once stable during calibration
 export interface FretboardGeometry {
-  nutWidth: number; // height of fretboard at nut (pixels)
+  nutHeight: number; // height of fretboard at nut (pixels)
   taperRatio: number; // width at soundhole / width at nut (< 1, fretboard narrows)
   fretCount: number; // number of frets visible on the fretboard
   fretboardLength: number; // X distance from nut to last fret (learned)
@@ -65,7 +65,7 @@ export interface FretboardState {
 
   // Real-time axis and scale (calculated from anchors)
   axisAngle: number; // angle of fretboard axis in radians
-  currentScale: number; // current Y scale factor based on detected heights
+  heightScale: number; // real-time Y scale factor based on detected fret wire heights
 
   // Learned geometry (locked once stable, includes fret count)
   geometry: FretboardGeometry;
@@ -77,7 +77,6 @@ export interface FretboardState {
   detectedFretPositions: number[]; // X positions of detected fret wires
   detectedNutY: { top: number; bottom: number }; // Y bounds of detected nut
 
-  lastUpdateTime: number;
   isValid: boolean;
 }
 

@@ -1,11 +1,13 @@
 import type { NotePosition, FretboardState } from './types';
 import { getNoteName, isNoteInScale, isRootNote } from './scales';
+import { GEOMETRY_STABLE_TIME_MS } from './constants';
 
 // Roboflow Design System Colors (Dark Mode)
 const ROOT_NOTE_COLOR = '#FF6B6B'; // destructive
 const SCALE_NOTE_COLOR = '#00FFCE'; // aquavision-500 (dark mode brand)
 const NOTE_RADIUS = 14;
 const FONT_SIZE = 11;
+const FONT_FAMILY = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 // Mirror x-coordinate to match the mirrored video
 function mirrorX(x: number, canvasWidth: number): number {
@@ -31,12 +33,6 @@ export function renderOverlay(
     renderCalibratingStatus(ctx, fretboardState, canvasWidth);
     return;
   }
-
-  // After calibration: disable debug visualizations
-  // Uncomment these lines to show them again for debugging:
-  // renderDetectedLandmarks(ctx, fretboardState, canvasWidth);
-  // renderDetectionLegend(ctx, canvasWidth, fretboardState.isValid);
-  // renderCalculatedFrets(ctx, fretboardState, canvasWidth);
 
   // Optionally draw fret numbers
   if (showFretNumbers && fretboardState.fretPositions.length > 0) {
@@ -86,7 +82,7 @@ function drawNoteMarker(
   // Draw note name
   ctx.globalAlpha = 1;
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${FONT_SIZE}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  ctx.font = `bold ${FONT_SIZE}px ${FONT_FAMILY}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(noteName, x, y);
@@ -104,12 +100,12 @@ function renderFretNumbers(
   if (fretPositions.length === 0) return;
 
   // Calculate Y position for fret numbers (below the fretboard)
-  const fretboardHalfWidth = geometry.nutWidth / 2;
-  const labelY = nutCenterY + fretboardHalfWidth + 25;
+  const fretboardHalfHeight = geometry.nutHeight / 2;
+  const labelY = nutCenterY + fretboardHalfHeight + 25;
 
   ctx.save();
   ctx.fillStyle = '#888';
-  ctx.font = '12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.font = `12px ${FONT_FAMILY}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
 
@@ -130,8 +126,6 @@ function renderFretNumbers(
 
   ctx.restore();
 }
-
-const GEOMETRY_STABLE_TIME_MS = 1500; // Must match fretboard.ts
 
 function renderDetectionLegend(ctx: CanvasRenderingContext2D, canvasWidth: number, isCalibrated: boolean): void {
   ctx.save();
@@ -180,7 +174,7 @@ function renderCalibratingStatus(ctx: CanvasRenderingContext2D, state: Fretboard
   ctx.fillRect(0, 0, canvasWidth, 80);
 
   ctx.fillStyle = '#fff';
-  ctx.font = '16px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.font = `16px ${FONT_FAMILY}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -209,38 +203,10 @@ function renderCalibratingStatus(ctx: CanvasRenderingContext2D, state: Fretboard
   ctx.fillText(message, canvasWidth / 2, 30);
 
   if (subMessage) {
-    ctx.font = '12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.font = `12px ${FONT_FAMILY}`;
     ctx.fillStyle = '#aaa';
     ctx.fillText(subMessage, canvasWidth / 2, 55);
   }
-
-  ctx.restore();
-}
-
-// Render calculated fret positions (green) for comparison with detected (yellow)
-// Currently disabled but kept for debugging - uncomment call in renderOverlay to use
-export function renderCalculatedFrets(
-  ctx: CanvasRenderingContext2D,
-  state: FretboardState,
-  canvasWidth: number
-): void {
-  if (state.fretPositions.length === 0) return;
-
-  const fretHeight = state.detectedNutY.bottom - state.detectedNutY.top;
-  if (fretHeight <= 0) return;
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(0, 255, 100, 0.6)'; // Green for calculated
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 4]); // Dashed line to distinguish from detected
-
-  state.fretPositions.forEach((fretX) => {
-    const mirroredX = mirrorX(fretX, canvasWidth);
-    ctx.beginPath();
-    ctx.moveTo(mirroredX, state.nutCenterY - fretHeight / 2);
-    ctx.lineTo(mirroredX, state.nutCenterY + fretHeight / 2);
-    ctx.stroke();
-  });
 
   ctx.restore();
 }
@@ -305,68 +271,6 @@ function renderDetectedLandmarks(
     ctx.textAlign = 'center';
     ctx.fillText('BODY', shMirrorX, state.soundholeCenterY - 30);
   }
-
-  ctx.restore();
-}
-
-export function renderDebugInfo(
-  ctx: CanvasRenderingContext2D,
-  state: FretboardState
-): void {
-  if (!state.isValid) return;
-
-  const canvasWidth = ctx.canvas.width;
-  const { nutX, nutCenterY, soundholeX, soundholeCenterY, axisAngle, currentScale, geometry, fretPositions } = state;
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-  ctx.lineWidth = 1;
-
-  // Calculate scaled widths
-  const nutHalfWidth = (geometry.nutWidth * currentScale) / 2;
-  const endHalfWidth = (geometry.nutWidth * geometry.taperRatio * currentScale) / 2;
-
-  // Draw fretboard outline following axis angle
-  ctx.beginPath();
-  ctx.moveTo(mirrorX(nutX, canvasWidth), nutCenterY - nutHalfWidth);
-  ctx.lineTo(mirrorX(soundholeX, canvasWidth), soundholeCenterY - endHalfWidth);
-  ctx.lineTo(mirrorX(soundholeX, canvasWidth), soundholeCenterY + endHalfWidth);
-  ctx.lineTo(mirrorX(nutX, canvasWidth), nutCenterY + nutHalfWidth);
-  ctx.closePath();
-  ctx.stroke();
-
-  // Draw fret lines following axis angle
-  ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
-  for (const fretX of fretPositions) {
-    // Calculate center Y at this fret position following axis
-    const dx = fretX - nutX;
-    const centerY = nutCenterY + dx * Math.tan(axisAngle);
-
-    // Calculate width at this fret position
-    const t = (nutX - fretX) / (nutX - soundholeX);
-    const halfWidth = nutHalfWidth * (1 - t * (1 - geometry.taperRatio));
-
-    ctx.beginPath();
-    ctx.moveTo(mirrorX(fretX, canvasWidth), centerY - halfWidth);
-    ctx.lineTo(mirrorX(fretX, canvasWidth), centerY + halfWidth);
-    ctx.stroke();
-  }
-
-  // Draw nut marker
-  ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(mirrorX(nutX, canvasWidth), nutCenterY - nutHalfWidth);
-  ctx.lineTo(mirrorX(nutX, canvasWidth), nutCenterY + nutHalfWidth);
-  ctx.stroke();
-
-  // Draw axis line (for debugging)
-  ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(mirrorX(nutX, canvasWidth), nutCenterY);
-  ctx.lineTo(mirrorX(soundholeX, canvasWidth), soundholeCenterY);
-  ctx.stroke();
 
   ctx.restore();
 }

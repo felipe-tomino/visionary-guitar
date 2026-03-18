@@ -1,95 +1,59 @@
-import { webrtc, streams, connectors } from '@roboflow/inference-sdk';
-import type { PredictionData, AppState, FretboardState } from './types';
-import { scales, noteNames } from './scales';
-import { tunings } from './tunings';
+import type { AppState, FretboardState, PredictionData } from './types';
+import { scales } from './scales';
+import { DEFAULT_FRET_COUNT } from './constants';
 import { createInitialFretboardState, processPredictions, calculateNotePositions } from './fretboard';
 import { renderOverlay } from './renderer';
+import { getAvailableCameras, startCameraStream, stopStream } from './camera';
+import { connectToRoboflow, type RoboflowConnection } from './connection';
+import {
+  getUIElements, populateDropdowns, populateCameraDropdown,
+  updateStatus, setConnecting, updateDetectButton, resetFretCountSlider,
+  setupCollapsibleControls,
+} from './ui';
 
-// DOM Elements
+// DOM
 const videoElement = document.getElementById('video') as HTMLVideoElement;
 const canvasElement = document.getElementById('overlay') as HTMLCanvasElement;
 const ctx = canvasElement.getContext('2d')!;
-const cameraSelect = document.getElementById('camera-select') as HTMLSelectElement;
-const scaleSelect = document.getElementById('scale-select') as HTMLSelectElement;
-const rootSelect = document.getElementById('root-select') as HTMLSelectElement;
-const tuningSelect = document.getElementById('tuning-select') as HTMLSelectElement;
-const fretCountInput = document.getElementById('fret-count') as HTMLInputElement;
-const fretCountValue = document.getElementById('fret-count-value') as HTMLSpanElement;
-const statusIndicator = document.getElementById('status-indicator') as HTMLElement;
-const statusText = document.getElementById('status-text') as HTMLElement;
-const connectBtn = document.getElementById('connect-btn') as HTMLButtonElement;
-const detectBtn = document.getElementById('detect-btn') as HTMLButtonElement;
+const ui = getUIElements();
 
-// Application state
+// State
 let appState: AppState = {
   selectedScale: 'major',
   rootNote: 2, // D
   selectedTuning: 'standard',
-  fretCount: 12,
+  fretCount: DEFAULT_FRET_COUNT,
   fretCountOverride: false,
   isConnected: false,
   isConnecting: false,
 };
 
 let fretboardState: FretboardState = createInitialFretboardState();
-let connection: Awaited<ReturnType<typeof webrtc.useStream>> | null = null;
+let connection: RoboflowConnection | null = null;
 let localStream: MediaStream | null = null;
 let selectedDeviceId: string = '';
 
-// Enumerate available video devices
-async function enumerateCameras(): Promise<void> {
+// === Camera ===
+
+async function initCameras(): Promise<void> {
   try {
-    // Request camera permission first to get device labels
-    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-    tempStream.getTracks().forEach(track => track.stop());
+    const cameras = await getAvailableCameras();
+    populateCameraDropdown(ui, cameras);
 
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-    // Clear existing options except the first placeholder
-    while (cameraSelect.options.length > 1) {
-      cameraSelect.remove(1);
-    }
-
-    if (videoDevices.length === 0) {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'No cameras found';
-      cameraSelect.appendChild(option);
-      return;
-    }
-
-    // Add video devices to dropdown
-    videoDevices.forEach((device, index) => {
-      const option = document.createElement('option');
-      option.value = device.deviceId;
-      option.textContent = device.label || `Camera ${index + 1}`;
-      cameraSelect.appendChild(option);
-    });
-
-    // Auto-select first camera if available
-    if (videoDevices.length > 0 && !selectedDeviceId) {
-      selectedDeviceId = videoDevices[0].deviceId;
-      cameraSelect.value = selectedDeviceId;
+    if (cameras.length > 0) {
+      selectedDeviceId = cameras[0].deviceId;
+      ui.cameraSelect.value = selectedDeviceId;
       await startPreview();
     }
-  } catch (error) {
-    console.error('Failed to enumerate cameras:', error);
-    updateStatus(false, 'Camera access denied');
-
-    // Add error option to dropdown
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'Camera access denied';
-    cameraSelect.appendChild(option);
+  } catch {
+    updateConnectionStatus(false, 'Camera access denied');
+    populateCameraDropdown(ui, [], 'Camera access denied');
   }
 }
 
-// Start camera preview (local stream only, no Roboflow connection)
 async function startPreview(): Promise<void> {
-  // Stop existing preview if any
   if (localStream && !appState.isConnected) {
-    streams.stopStream(localStream);
+    stopStream(localStream);
     localStream = null;
   }
 
@@ -99,17 +63,7 @@ async function startPreview(): Promise<void> {
   }
 
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: { exact: selectedDeviceId },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
-      },
-      audio: false,
-    });
-
-    // Show local stream in video element
+    localStream = await startCameraStream(selectedDeviceId);
     videoElement.srcObject = localStream;
     resizeCanvas();
   } catch (error) {
@@ -117,135 +71,7 @@ async function startPreview(): Promise<void> {
   }
 }
 
-// Initialize UI
-function initializeUI(): void {
-  // Populate scale dropdown
-  for (const [key, scale] of Object.entries(scales)) {
-    const option = document.createElement('option');
-    option.value = key;
-    option.textContent = scale.name;
-    if (key === appState.selectedScale) option.selected = true;
-    scaleSelect.appendChild(option);
-  }
-
-  // Populate root note dropdown
-  for (let i = 0; i < noteNames.length; i++) {
-    const option = document.createElement('option');
-    option.value = i.toString();
-    option.textContent = noteNames[i];
-    if (i === appState.rootNote) option.selected = true;
-    rootSelect.appendChild(option);
-  }
-
-  // Populate tuning dropdown
-  for (const [key, tuning] of Object.entries(tunings)) {
-    const option = document.createElement('option');
-    option.value = key;
-    option.textContent = tuning.name;
-    if (key === appState.selectedTuning) option.selected = true;
-    tuningSelect.appendChild(option);
-  }
-
-  // Set initial fret count
-  fretCountInput.value = appState.fretCount.toString();
-  fretCountValue.textContent = appState.fretCount.toString();
-
-  // Event listeners
-  cameraSelect.addEventListener('change', async () => {
-    selectedDeviceId = cameraSelect.value;
-    if (!appState.isConnected) {
-      await startPreview();
-    }
-  });
-
-  scaleSelect.addEventListener('change', () => {
-    appState.selectedScale = scaleSelect.value;
-    render();
-  });
-
-  rootSelect.addEventListener('change', () => {
-    appState.rootNote = parseInt(rootSelect.value, 10);
-    render();
-  });
-
-  tuningSelect.addEventListener('change', () => {
-    appState.selectedTuning = tuningSelect.value;
-    render();
-  });
-
-  fretCountInput.addEventListener('input', () => {
-    appState.fretCount = parseInt(fretCountInput.value, 10);
-    appState.fretCountOverride = true; // User manually set fret count
-    fretCountValue.textContent = fretCountInput.value;
-    render();
-  });
-
-  connectBtn.addEventListener('click', toggleConnection);
-
-  // Reset detection button
-  detectBtn.addEventListener('click', resetDetection);
-
-  // Controls panel collapse toggle
-  const controlsToggle = document.getElementById('controls-toggle');
-  const controlsContent = document.getElementById('controls-content');
-  const controlsChevron = document.getElementById('controls-chevron');
-
-  if (controlsToggle && controlsContent && controlsChevron) {
-    controlsToggle.addEventListener('click', () => {
-      controlsContent.classList.toggle('collapsed');
-      controlsChevron.classList.toggle('collapsed');
-    });
-  }
-}
-
-function updateStatus(connected: boolean, message: string): void {
-  appState.isConnected = connected;
-  statusIndicator.className = `status-dot ${connected ? 'connected' : 'disconnected'}`;
-  statusText.textContent = message;
-  connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
-  connectBtn.classList.toggle('btn-primary', !connected);
-  connectBtn.classList.toggle('btn-destructive', connected);
-  updateDetectButton();
-}
-
-function setConnecting(connecting: boolean): void {
-  appState.isConnecting = connecting;
-  connectBtn.disabled = connecting;
-  if (connecting) {
-    connectBtn.textContent = 'Connecting...';
-  }
-}
-
-function resetDetection(): void {
-  // Reset the fretboard state to trigger re-detection
-  fretboardState = createInitialFretboardState();
-  appState.fretCountOverride = false;
-
-  // Reset slider to default range
-  fretCountInput.max = '24';
-  appState.fretCount = 12;
-  fretCountInput.value = '12';
-  fretCountValue.textContent = '12';
-
-  ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  updateDetectButton();
-}
-
-function updateDetectButton(): void {
-  const isDetecting = !fretboardState.geometry.isLocked;
-  const isConnected = appState.isConnected;
-
-  if (!isConnected) {
-    detectBtn.disabled = true;
-    detectBtn.textContent = 'Reset Detection';
-  } else if (isDetecting) {
-    detectBtn.disabled = true;
-    detectBtn.textContent = 'Detecting...';
-  } else {
-    detectBtn.disabled = false;
-    detectBtn.textContent = 'Reset Detection';
-  }
-}
+// === Connection ===
 
 async function toggleConnection(): Promise<void> {
   if (appState.isConnecting) return;
@@ -253,76 +79,36 @@ async function toggleConnection(): Promise<void> {
   if (appState.isConnected && connection) {
     await connection.cleanup();
     connection = null;
-    updateStatus(false, 'Disconnected');
-    fretboardState = createInitialFretboardState();
-    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-    // Reset fret count slider to default
-    appState.fretCountOverride = false;
-    fretCountInput.max = '24';
-    appState.fretCount = 12;
-    fretCountInput.value = '12';
-    fretCountValue.textContent = '12';
-
-    // Restart preview with local stream
+    updateConnectionStatus(false, 'Disconnected');
+    resetState();
     await startPreview();
     return;
   }
 
-  await startConnection();
-}
-
-async function startConnection(): Promise<void> {
   if (!selectedDeviceId) {
-    updateStatus(false, 'Select a camera first');
+    updateConnectionStatus(false, 'Select a camera first');
     return;
   }
 
-  setConnecting(true);
-  updateStatus(false, 'Connecting...');
+  appState.isConnecting = true;
+  setConnecting(ui, true);
+  updateConnectionStatus(false, 'Connecting...');
 
   try {
-    // Stop preview stream first
     if (localStream) {
-      streams.stopStream(localStream);
+      stopStream(localStream);
       localStream = null;
     }
 
-    // Get camera stream with selected device
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: { exact: selectedDeviceId },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
-      },
-      audio: false,
-    });
-
-    // Show local stream immediately
+    localStream = await startCameraStream(selectedDeviceId);
     videoElement.srcObject = localStream;
 
-    // Create connector using proxy
-    const connector = connectors.withProxyUrl('/api/init-webrtc');
+    connection = await connectToRoboflow(localStream, handlePredictionData);
 
-    // Connect to Roboflow
-    connection = await webrtc.useStream({
-      source: localStream,
-      connector,
-      wrtcParams: {
-        workspaceName: 'tominoprod',
-        workflowId: 'guitar-predictions',
-        imageInputName: 'image',
-        dataOutputNames: ['predictions'],
-      },
-      onData: handlePredictionData,
-    });
+    appState.isConnecting = false;
+    setConnecting(ui, false);
+    updateConnectionStatus(true, 'Connected');
 
-    // Mark as connected
-    setConnecting(false);
-    updateStatus(true, 'Connected');
-
-    // Switch to remote stream (annotated video from Roboflow)
     try {
       const remoteStream = await connection.remoteStream();
       videoElement.srcObject = remoteStream;
@@ -332,12 +118,12 @@ async function startConnection(): Promise<void> {
     }
   } catch (error) {
     console.error('Failed to start WebRTC connection:', error);
-    setConnecting(false);
-    updateStatus(false, 'Connection failed');
+    appState.isConnecting = false;
+    setConnecting(ui, false);
+    updateConnectionStatus(false, 'Connection failed');
 
-    // Cleanup on error and restart preview
     if (localStream) {
-      streams.stopStream(localStream);
+      stopStream(localStream);
       localStream = null;
     }
     await startPreview();
@@ -346,32 +132,38 @@ async function startConnection(): Promise<void> {
 
 function handlePredictionData(data: unknown): void {
   const rawData = data as {
-    serialized_output_data?: {
-      predictions?: PredictionData;
-    };
+    serialized_output_data?: { predictions?: PredictionData };
     predictions?: PredictionData;
   };
 
   const predictions = rawData.serialized_output_data?.predictions || rawData.predictions;
+  if (!predictions) return;
 
-  if (!predictions) {
-    return;
-  }
-
-  // Get video dimensions for scaling predictions from model space to video space
   const videoWidth = videoElement.videoWidth || canvasElement.width;
   const videoHeight = videoElement.videoHeight || canvasElement.height;
 
-  fretboardState = processPredictions(
-    predictions,
-    fretboardState,
-    appState.fretCount,
-    videoWidth,
-    videoHeight
-  );
-
+  fretboardState = processPredictions(predictions, fretboardState, videoWidth, videoHeight);
   render();
 }
+
+// === State helpers ===
+
+function updateConnectionStatus(connected: boolean, message: string): void {
+  appState.isConnected = connected;
+  updateStatus(ui, connected, message);
+  updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
+}
+
+function resetState(): void {
+  fretboardState = createInitialFretboardState();
+  appState.fretCountOverride = false;
+  appState.fretCount = DEFAULT_FRET_COUNT;
+  resetFretCountSlider(ui);
+  ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+  updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
+}
+
+// === Rendering ===
 
 function resizeCanvas(): void {
   if (videoElement.videoWidth && videoElement.videoHeight) {
@@ -384,63 +176,61 @@ function render(): void {
   const scale = scales[appState.selectedScale];
   if (!scale) return;
 
-  // After calibration, update slider max to detected fret count
+  // Update fret count slider after calibration
   if (fretboardState.geometry.isLocked) {
     const detectedFrets = fretboardState.geometry.fretCount;
+    if (parseInt(ui.fretCountInput.max) !== detectedFrets) {
+      ui.fretCountInput.max = detectedFrets.toString();
 
-    // Update slider max value to detected count
-    if (parseInt(fretCountInput.max) !== detectedFrets) {
-      fretCountInput.max = detectedFrets.toString();
-
-      // If current value exceeds new max, clamp it
       if (appState.fretCount > detectedFrets) {
         appState.fretCount = detectedFrets;
-        fretCountInput.value = detectedFrets.toString();
+        ui.fretCountInput.value = detectedFrets.toString();
       }
 
-      // Set initial value to max (show all frets) if user hasn't manually adjusted
       if (!appState.fretCountOverride) {
         appState.fretCount = detectedFrets;
-        fretCountInput.value = detectedFrets.toString();
+        ui.fretCountInput.value = detectedFrets.toString();
       }
     }
   }
 
-  // Update the fret count display
-  fretCountValue.textContent = appState.fretCount.toString();
+  ui.fretCountValue.textContent = appState.fretCount.toString();
 
-  const notePositions = calculateNotePositions(
-    fretboardState,
-    appState.selectedTuning,
-    appState.fretCount
-  );
-
-  renderOverlay(
-    ctx,
-    notePositions,
-    scale.intervals,
-    appState.rootNote,
-    fretboardState
-  );
-
-  // Update detect button state
-  updateDetectButton();
+  const notePositions = calculateNotePositions(fretboardState, appState.selectedTuning, appState.fretCount);
+  renderOverlay(ctx, notePositions, scale.intervals, appState.rootNote, fretboardState);
+  updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
 }
 
-// Handle video resize
-videoElement.addEventListener('loadedmetadata', resizeCanvas);
-videoElement.addEventListener('resize', resizeCanvas);
+// === Event wiring ===
 
-// Window resize handler
-window.addEventListener('resize', () => {
-  resizeCanvas();
-  render();
-});
-
-// Initialize when DOM is ready
 function init(): void {
-  initializeUI();
-  enumerateCameras();
+  populateDropdowns(ui, appState);
+  setupCollapsibleControls();
+
+  ui.cameraSelect.addEventListener('change', async () => {
+    selectedDeviceId = ui.cameraSelect.value;
+    if (!appState.isConnected) await startPreview();
+  });
+
+  ui.scaleSelect.addEventListener('change', () => { appState.selectedScale = ui.scaleSelect.value; render(); });
+  ui.rootSelect.addEventListener('change', () => { appState.rootNote = parseInt(ui.rootSelect.value, 10); render(); });
+  ui.tuningSelect.addEventListener('change', () => { appState.selectedTuning = ui.tuningSelect.value; render(); });
+
+  ui.fretCountInput.addEventListener('input', () => {
+    appState.fretCount = parseInt(ui.fretCountInput.value, 10);
+    appState.fretCountOverride = true;
+    ui.fretCountValue.textContent = ui.fretCountInput.value;
+    render();
+  });
+
+  ui.connectBtn.addEventListener('click', toggleConnection);
+  ui.detectBtn.addEventListener('click', resetState);
+
+  videoElement.addEventListener('loadedmetadata', resizeCanvas);
+  videoElement.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize', () => { resizeCanvas(); render(); });
+
+  initCameras();
 }
 
 if (document.readyState === 'loading') {
