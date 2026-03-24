@@ -4,12 +4,15 @@ import { DEFAULT_FRET_COUNT } from './constants';
 import { createInitialFretboardState, processPredictions, calculateNotePositions } from './fretboard';
 import { renderOverlay } from './renderer';
 import { getAvailableCameras, startCameraStream, stopStream } from './camera';
-import { connectToRoboflow, type RoboflowConnection } from './connection';
+import { connectToRoboflow, type RoboflowConnection, type WorkflowParams } from './connection';
 import {
   getUIElements, populateDropdowns, populateCameraDropdown,
   updateStatus, setConnecting, updateDetectButton, resetFretCountSlider,
   setupCollapsibleControls,
 } from './ui';
+
+// Feature flag: use new Roboflow Workflow pipeline (set to false to use legacy local processing)
+const USE_WORKFLOW_PIPELINE = true;
 
 // DOM
 const videoElement = document.getElementById('video') as HTMLVideoElement;
@@ -71,6 +74,54 @@ async function startPreview(): Promise<void> {
   }
 }
 
+// === Workflow parameters ===
+
+function getWorkflowParams(): WorkflowParams {
+  return {
+    scale_name: appState.selectedScale,
+    root_note: appState.rootNote,
+    tuning: appState.selectedTuning,
+    fret_count: appState.fretCount,
+  };
+}
+
+async function reconnectWithParams(): Promise<void> {
+  if (!appState.isConnected || !connection || appState.isConnecting) return;
+
+  appState.isConnecting = true;
+  setConnecting(ui, true);
+  updateConnectionStatus(true, 'Updating...');
+
+  try {
+    await connection.cleanup();
+    connection = null;
+
+    localStream = await startCameraStream(selectedDeviceId);
+    videoElement.srcObject = localStream;
+
+    const onData = USE_WORKFLOW_PIPELINE ? handleWorkflowData : handlePredictionData;
+    const params = USE_WORKFLOW_PIPELINE ? getWorkflowParams() : undefined;
+    connection = await connectToRoboflow(localStream, onData, params);
+
+    appState.isConnecting = false;
+    setConnecting(ui, false);
+    updateConnectionStatus(true, 'Connected');
+
+    try {
+      const remoteStream = await connection.remoteStream();
+      videoElement.srcObject = remoteStream;
+      resizeCanvas();
+    } catch {
+      // Keep local stream if remote fails
+    }
+  } catch (error) {
+    console.error('Failed to reconnect:', error);
+    appState.isConnecting = false;
+    setConnecting(ui, false);
+    updateConnectionStatus(false, 'Reconnection failed');
+  }
+}
+
 // === Connection ===
 
 async function toggleConnection(): Promise<void> {
@@ -103,11 +154,18 @@ async function toggleConnection(): Promise<void> {
     localStream = await startCameraStream(selectedDeviceId);
     videoElement.srcObject = localStream;
 
-    connection = await connectToRoboflow(localStream, handlePredictionData);
+    const onData = USE_WORKFLOW_PIPELINE ? handleWorkflowData : handlePredictionData;
+    const params = USE_WORKFLOW_PIPELINE ? getWorkflowParams() : undefined;
+    connection = await connectToRoboflow(localStream, onData, params);
 
     appState.isConnecting = false;
     setConnecting(ui, false);
     updateConnectionStatus(true, 'Connected');
+
+    if (USE_WORKFLOW_PIPELINE) {
+      // Workflow pipeline: hide canvas overlay, video track has annotations baked in
+      canvasElement.style.display = 'none';
+    }
 
     try {
       const remoteStream = await connection.remoteStream();
@@ -128,6 +186,14 @@ async function toggleConnection(): Promise<void> {
     }
     await startPreview();
   }
+}
+
+// === Data handlers ===
+
+function handleWorkflowData(_data: unknown): void {
+  // In workflow pipeline mode, the annotated video comes via the video track.
+  // The data channel is disabled (dataOutputNames: []).
+  // Nothing to process here — the video element displays the annotated stream directly.
 }
 
 function handlePredictionData(data: unknown): void {
@@ -151,7 +217,9 @@ function handlePredictionData(data: unknown): void {
 function updateConnectionStatus(connected: boolean, message: string): void {
   appState.isConnected = connected;
   updateStatus(ui, connected, message);
-  updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
+  if (!USE_WORKFLOW_PIPELINE) {
+    updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
+  }
 }
 
 function resetState(): void {
@@ -160,10 +228,13 @@ function resetState(): void {
   appState.fretCount = DEFAULT_FRET_COUNT;
   resetFretCountSlider(ui);
   ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
+  canvasElement.style.display = '';
+  if (!USE_WORKFLOW_PIPELINE) {
+    updateDetectButton(ui, !fretboardState.geometry.isLocked, appState.isConnected);
+  }
 }
 
-// === Rendering ===
+// === Rendering (legacy local pipeline) ===
 
 function resizeCanvas(): void {
   if (videoElement.videoWidth && videoElement.videoHeight) {
@@ -173,6 +244,8 @@ function resizeCanvas(): void {
 }
 
 function render(): void {
+  if (USE_WORKFLOW_PIPELINE) return; // Rendering handled by Roboflow Workflow
+
   const scale = scales[appState.selectedScale];
   if (!scale) return;
 
@@ -212,15 +285,42 @@ function init(): void {
     if (!appState.isConnected) await startPreview();
   });
 
-  ui.scaleSelect.addEventListener('change', () => { appState.selectedScale = ui.scaleSelect.value; render(); });
-  ui.rootSelect.addEventListener('change', () => { appState.rootNote = parseInt(ui.rootSelect.value, 10); render(); });
-  ui.tuningSelect.addEventListener('change', () => { appState.selectedTuning = ui.tuningSelect.value; render(); });
+  ui.scaleSelect.addEventListener('change', () => {
+    appState.selectedScale = ui.scaleSelect.value;
+    if (USE_WORKFLOW_PIPELINE) {
+      reconnectWithParams();
+    } else {
+      render();
+    }
+  });
+
+  ui.rootSelect.addEventListener('change', () => {
+    appState.rootNote = parseInt(ui.rootSelect.value, 10);
+    if (USE_WORKFLOW_PIPELINE) {
+      reconnectWithParams();
+    } else {
+      render();
+    }
+  });
+
+  ui.tuningSelect.addEventListener('change', () => {
+    appState.selectedTuning = ui.tuningSelect.value;
+    if (USE_WORKFLOW_PIPELINE) {
+      reconnectWithParams();
+    } else {
+      render();
+    }
+  });
 
   ui.fretCountInput.addEventListener('input', () => {
     appState.fretCount = parseInt(ui.fretCountInput.value, 10);
     appState.fretCountOverride = true;
     ui.fretCountValue.textContent = ui.fretCountInput.value;
-    render();
+    if (USE_WORKFLOW_PIPELINE) {
+      reconnectWithParams();
+    } else {
+      render();
+    }
   });
 
   ui.connectBtn.addEventListener('click', toggleConnection);
@@ -228,7 +328,7 @@ function init(): void {
 
   videoElement.addEventListener('loadedmetadata', resizeCanvas);
   videoElement.addEventListener('resize', resizeCanvas);
-  window.addEventListener('resize', () => { resizeCanvas(); render(); });
+  window.addEventListener('resize', () => { resizeCanvas(); if (!USE_WORKFLOW_PIPELINE) render(); });
 
   initCameras();
 }

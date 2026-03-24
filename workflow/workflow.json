@@ -1,0 +1,320 @@
+{
+  "version": "1.0",
+  "inputs": [
+    {
+      "type": "WorkflowImage",
+      "name": "image"
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "scale_name",
+      "default_value": "major"
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "root_note",
+      "default_value": 2
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "tuning",
+      "default_value": "standard"
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "fret_count",
+      "default_value": 12
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "fret_wire_class",
+      "default_value": "fret wire"
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "fret_wire_conf",
+      "default_value": 0.65
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "landmark_classes",
+      "default_value": [
+        "nut",
+        "soundhole",
+        "fretboard"
+      ]
+    },
+    {
+      "type": "WorkflowParameter",
+      "name": "landmark_conf",
+      "default_value": 0.3
+    }
+  ],
+  "dynamic_blocks_definitions": [
+    {
+      "type": "DynamicBlockDefinition",
+      "manifest": {
+        "type": "ManifestDescription",
+        "block_type": "GeometryEngine",
+        "inputs": {
+          "fret_wire_detections": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "step_output"
+            ]
+          },
+          "landmark_detections": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "step_output"
+            ]
+          }
+        },
+        "outputs": {
+          "geometry_data": {
+            "type": "DynamicOutputDefinition",
+            "kind": []
+          }
+        }
+      },
+      "code": {
+        "type": "PythonCode",
+        "run_function_code": "import numpy as np\nimport cv2\nimport math\nimport time\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# CONSTANTS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nFRET_RATIO = 2 ** (-1 / 12)  # ~0.9439 (equal temperament)\nGEOMETRY_STABLE_TIME_MS = 1500\nMIN_FRET_NUT_DISTANCE = 15\nMIN_FRET_BODY_DISTANCE = 15\nNUT_STABILITY_THRESHOLD = 5\n\n# Smoothing factors for values NOT covered by Detection Stabilizer\nANGLE_SMOOTHING = 0.2\nGEOMETRY_SMOOTHING = 0.2\nSCALE_SMOOTHING = 0.3\nFRET_POSITION_SMOOTHING = 0.6\nANCHOR_SMOOTHING = 0.6\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# sv.Detections \u2192 dict conversion\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef sv_to_dicts(detections):\n    \"\"\"Convert sv.Detections to a list of dicts with polygon support.\"\"\"\n    result = []\n    n = len(detections)\n    class_names = detections.data.get(\"class_name\", []) if detections.data else []\n    masks = detections.mask  # May be None if masks not preserved\n\n    for i in range(n):\n        x1, y1, x2, y2 = detections.xyxy[i]\n        det = {\n            \"class_name\": class_names[i] if i < len(class_names) else \"\",\n            \"cx\": float((x1 + x2) / 2),\n            \"cy\": float((y1 + y2) / 2),\n            \"x1\": float(x1), \"y1\": float(y1),\n            \"x2\": float(x2), \"y2\": float(y2),\n            \"width\": float(x2 - x1),\n            \"height\": float(y2 - y1),\n            \"points\": [],\n        }\n\n        # Extract polygon from mask if available\n        if masks is not None and i < len(masks):\n            mask = masks[i].astype(np.uint8)\n            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)\n            if contours:\n                contour = max(contours, key=cv2.contourArea)\n                pts = contour.squeeze()\n                if len(pts.shape) == 2 and len(pts) >= 3:\n                    det[\"points\"] = [{\"x\": float(p[0]), \"y\": float(p[1])} for p in pts]\n\n        # Fallback: use bbox corners\n        if not det[\"points\"]:\n            det[\"points\"] = [\n                {\"x\": float(x1), \"y\": float(y1)},\n                {\"x\": float(x2), \"y\": float(y1)},\n                {\"x\": float(x2), \"y\": float(y2)},\n                {\"x\": float(x1), \"y\": float(y2)},\n            ]\n\n        result.append(det)\n    return result\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# UTILITY FUNCTIONS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef smooth_value(current, new_value, factor):\n    if current == 0:\n        return new_value\n    return current + (new_value - current) * factor\n\n\ndef get_centroid(det):\n    points = det[\"points\"]\n    if not points:\n        return {\"x\": det[\"cx\"], \"y\": det[\"cy\"]}\n    xs = [p[\"x\"] for p in points]\n    ys = [p[\"y\"] for p in points]\n    return {\"x\": sum(xs) / len(xs), \"y\": sum(ys) / len(ys)}\n\n\ndef get_polygon_height(det):\n    points = det[\"points\"]\n    if len(points) < 2:\n        return det[\"height\"]\n    ys = [p[\"y\"] for p in points]\n    return max(ys) - min(ys)\n\n\ndef fit_line_angle(points):\n    if len(points) < 2:\n        return 0\n    xs = np.array([p[\"x\"] for p in points])\n    ys = np.array([p[\"y\"] for p in points])\n    mean_x = np.mean(xs)\n    mean_y = np.mean(ys)\n    numerator = np.sum((xs - mean_x) * (ys - mean_y))\n    denominator = np.sum((xs - mean_x) ** 2)\n    if abs(denominator) < 0.001:\n        return -math.pi / 2\n    return math.atan(numerator / denominator)\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# FRET INTERPOLATION\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef analyze_and_interpolate_frets(nut_x, detected_positions, max_frets=24, reference_spacing=0):\n    if not detected_positions:\n        return {\"count\": 0, \"positions\": []}\n    if len(detected_positions) == 1:\n        return {\"count\": 1, \"positions\": list(detected_positions)}\n\n    result_positions = []\n    prev_x = nut_x\n\n    first_gap = nut_x - detected_positions[0]\n    expected_spacing = reference_spacing if reference_spacing > 0 else first_gap\n\n    for i, detected_x in enumerate(detected_positions):\n        gap_size = prev_x - detected_x\n        if gap_size <= 0:\n            continue\n\n        num_frets = 1\n        for n in range(1, 7):\n            expected_gap_n = expected_spacing * (1 - FRET_RATIO ** n) / (1 - FRET_RATIO)\n            expected_gap_n1 = expected_spacing * (1 - FRET_RATIO ** (n + 1)) / (1 - FRET_RATIO)\n\n            if gap_size < expected_gap_n * 0.85:\n                num_frets = max(1, n - 1)\n                break\n\n            threshold = expected_gap_n + (expected_gap_n1 - expected_gap_n) * 0.4\n            if gap_size < threshold:\n                num_frets = n\n                break\n\n            num_frets = n + 1\n\n        num_frets = max(1, min(num_frets, 6))\n\n        if num_frets == 1:\n            result_positions.append(detected_x)\n            expected_spacing = gap_size * FRET_RATIO\n        else:\n            total_ratio_sum = (1 - FRET_RATIO ** num_frets) / (1 - FRET_RATIO)\n            first_fret_spacing = gap_size / total_ratio_sum\n\n            for j in range(1, num_frets + 1):\n                accumulated = sum(FRET_RATIO ** k for k in range(j))\n                t = accumulated / total_ratio_sum\n                interpolated_x = prev_x - gap_size * t\n                result_positions.append(detected_x if j == num_frets else interpolated_x)\n\n            expected_spacing = first_fret_spacing * (FRET_RATIO ** num_frets)\n\n        prev_x = detected_x\n        if len(result_positions) >= max_frets:\n            break\n\n    return {\"count\": len(result_positions), \"positions\": result_positions}\n\n\ndef smooth_fret_positions(new_positions, previous_positions):\n    if not previous_positions:\n        return new_positions\n    return [\n        previous_positions[i] + (pos - previous_positions[i]) * FRET_POSITION_SMOOTHING\n        if i < len(previous_positions)\n        else pos\n        for i, pos in enumerate(new_positions)\n    ]\n\n\ndef extend_to_fret_count(positions, target_count):\n    if not positions or len(positions) >= target_count:\n        return positions\n    if len(positions) < 2:\n        return positions\n\n    extended = list(positions)\n    last_spacing = positions[-2] - positions[-1]\n    prev_x = positions[-1]\n    current_spacing = last_spacing * FRET_RATIO\n\n    while len(extended) < target_count:\n        next_x = prev_x - current_spacing\n        extended.append(next_x)\n        prev_x = next_x\n        current_spacing *= FRET_RATIO\n\n    return extended\n\n\ndef calculate_first_fret_spacing(geometry):\n    if not geometry[\"is_locked\"] or geometry[\"fretboard_length\"] <= 0 or geometry[\"fret_count\"] <= 0:\n        return 0\n    series_sum = (1 - FRET_RATIO ** geometry[\"fret_count\"]) / (1 - FRET_RATIO)\n    return geometry[\"fretboard_length\"] / series_sum\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# CLASSIFICATION & EXTRACTION\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef classify_detections(landmark_dicts, fret_wire_dicts):\n    fretboard = None\n    nut = None\n    soundhole = None\n\n    for det in landmark_dicts:\n        cls = det[\"class_name\"]\n        if cls == \"fretboard\" and fretboard is None:\n            fretboard = det\n        elif cls == \"nut\" and nut is None:\n            nut = det\n        elif cls == \"soundhole\" and soundhole is None:\n            soundhole = det\n\n    return {\n        \"fretboard\": fretboard,\n        \"nut\": nut,\n        \"soundhole\": soundhole,\n        \"fret_wires\": fret_wire_dicts,\n    }\n\n\ndef collect_detected_frets(fret_wires, nut_x, soundhole_x):\n    positions = []\n    for fw in fret_wires:\n        centroid = get_centroid(fw)\n        if nut_x > 0 and nut_x - centroid[\"x\"] < MIN_FRET_NUT_DISTANCE:\n            continue\n        if soundhole_x > 0 and centroid[\"x\"] - soundhole_x < MIN_FRET_BODY_DISTANCE:\n            continue\n        positions.append(centroid[\"x\"])\n\n    positions.sort(reverse=True)\n    return positions\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# ANCHOR EXTRACTION\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef extract_anchors(state, detections):\n    axis_points = []\n\n    if detections[\"nut\"] is not None:\n        det = detections[\"nut\"]\n        centroid = get_centroid(det)\n        state[\"nut_x\"] = smooth_value(state[\"nut_x\"], centroid[\"x\"], ANCHOR_SMOOTHING)\n        state[\"nut_center_y\"] = smooth_value(state[\"nut_center_y\"], centroid[\"y\"], ANCHOR_SMOOTHING)\n        axis_points.append(centroid)\n        state[\"detected_nut_y\"] = {\"top\": det[\"y1\"], \"bottom\": det[\"y2\"]}\n\n    for fw in detections[\"fret_wires\"]:\n        centroid = get_centroid(fw)\n        axis_points.append(centroid)\n\n    if detections[\"soundhole\"] is not None:\n        det = detections[\"soundhole\"]\n        centroid = get_centroid(det)\n        axis_points.append(centroid)\n\n        if not state[\"geometry\"][\"is_locked\"]:\n            rightmost_x = max(det[\"points\"], key=lambda p: p[\"x\"])[\"x\"] if det[\"points\"] else det[\"x2\"]\n            state[\"soundhole_x\"] = smooth_value(state[\"soundhole_x\"], rightmost_x, ANCHOR_SMOOTHING)\n            state[\"soundhole_center_y\"] = smooth_value(state[\"soundhole_center_y\"], centroid[\"y\"], ANCHOR_SMOOTHING)\n\n    return axis_points\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# GEOMETRY CALIBRATION\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef calibrate_geometry(state, detections, frets):\n    result = (\n        analyze_and_interpolate_frets(state[\"nut_x\"], frets)\n        if state[\"nut_x\"] > 0\n        else {\"count\": len(frets), \"positions\": frets}\n    )\n    estimated_count = result[\"count\"]\n    interpolated = result[\"positions\"]\n\n    state[\"fret_positions\"] = smooth_fret_positions(interpolated, state[\"fret_positions\"])\n\n    geom = state[\"geometry\"]\n    if estimated_count > geom[\"max_frets_seen\"]:\n        geom[\"max_frets_seen\"] = estimated_count\n\n    if interpolated:\n        last_fret_x = interpolated[-1]\n        geom[\"last_fret_x\"] = smooth_value(geom[\"last_fret_x\"], last_fret_x, 0.6)\n\n    if detections[\"nut\"] is not None and detections[\"soundhole\"] is not None and estimated_count > 0:\n        _learn_geometry(state, detections, estimated_count)\n    else:\n        geom[\"stable_start_time\"] = 0\n\n\ndef _learn_geometry(state, detections, estimated_count):\n    geom = state[\"geometry\"]\n\n    # Learn nut height from polygon\n    nut_height = get_polygon_height(detections[\"nut\"])\n    if nut_height > 20:\n        geom[\"nut_height\"] = (\n            nut_height\n            if geom[\"nut_height\"] == 0\n            else geom[\"nut_height\"] * (1 - GEOMETRY_SMOOTHING) + nut_height * GEOMETRY_SMOOTHING\n        )\n\n    # Learn taper from fretboard polygon (needs real polygon data, not just bbox corners)\n    if detections[\"fretboard\"] is not None:\n        fb_points = detections[\"fretboard\"][\"points\"]\n        sh_cx = detections[\"soundhole\"][\"cx\"]\n        points_near_sh = [p for p in fb_points if abs(p[\"x\"] - sh_cx) < 50]\n\n        if len(points_near_sh) >= 2 and nut_height > 0:\n            ys = [p[\"y\"] for p in points_near_sh]\n            end_width = max(ys) - min(ys)\n            taper = max(0.5, min(1.0, end_width / nut_height))\n            geom[\"taper_ratio\"] = geom[\"taper_ratio\"] * (1 - GEOMETRY_SMOOTHING) + taper * GEOMETRY_SMOOTHING\n\n    # Check fret count stability\n    now = time.time() * 1000\n    is_stable = estimated_count == geom[\"last_stable_fret_count\"]\n\n    if is_stable:\n        if geom[\"stable_start_time\"] == 0:\n            geom[\"stable_start_time\"] = now\n        elapsed = now - geom[\"stable_start_time\"]\n        if elapsed >= GEOMETRY_STABLE_TIME_MS:\n            _lock_geometry(state, estimated_count)\n    else:\n        geom[\"stable_start_time\"] = 0\n        geom[\"last_stable_fret_count\"] = estimated_count\n\n\ndef _lock_geometry(state, fret_count):\n    geom = state[\"geometry\"]\n    geom[\"fret_count\"] = fret_count\n\n    if state[\"nut_x\"] > 0 and geom[\"last_fret_x\"] > 0:\n        last_fret_dist = abs(state[\"nut_x\"] - geom[\"last_fret_x\"])\n        fret_ratio = 1 - FRET_RATIO ** (fret_count - 0.7)\n        geom[\"scale_length\"] = last_fret_dist / fret_ratio\n        geom[\"fretboard_length\"] = last_fret_dist\n\n    geom[\"is_locked\"] = True\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# POST-LOCK UPDATES\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef update_locked_fret_positions(state, prev_nut_x, frets):\n    geom = state[\"geometry\"]\n    nut_movement = abs(state[\"nut_x\"] - prev_nut_x)\n    nut_stable = nut_movement < NUT_STABILITY_THRESHOLD and len(state[\"fret_positions\"]) > 0\n\n    if nut_stable:\n        delta = state[\"nut_x\"] - prev_nut_x\n        state[\"fret_positions\"] = [x + delta for x in state[\"fret_positions\"]]\n    elif state[\"nut_x\"] > 0 and frets:\n        ref_spacing = calculate_first_fret_spacing(geom)\n        result = analyze_and_interpolate_frets(state[\"nut_x\"], frets, geom[\"fret_count\"], ref_spacing)\n        extended = extend_to_fret_count(result[\"positions\"], geom[\"fret_count\"])\n        state[\"fret_positions\"] = smooth_fret_positions(extended, state[\"fret_positions\"])\n\n\ndef update_scale_factor(state, prev_height_scale, fret_wires):\n    geom = state[\"geometry\"]\n    if not fret_wires or not geom[\"is_locked\"] or geom[\"nut_height\"] == 0:\n        return\n\n    total_height = 0\n    count = 0\n    for fw in fret_wires:\n        h = get_polygon_height(fw)\n        if h > 10:\n            total_height += h\n            count += 1\n\n    if count > 0:\n        avg_detected = total_height / count\n        expected_avg = geom[\"nut_height\"] * (1 + geom[\"taper_ratio\"]) / 2\n        scale = avg_detected / expected_avg\n        state[\"height_scale\"] = (\n            scale if prev_height_scale == 1 else prev_height_scale + (scale - prev_height_scale) * SCALE_SMOOTHING\n        )\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# CALIBRATION STATUS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef _build_calibration_status(state):\n    geom = state[\"geometry\"]\n\n    if state[\"is_valid\"]:\n        status = \"locked\"\n        message = \"\"\n        progress = 100\n    elif state[\"nut_x\"] > 0 and state[\"soundhole_x\"] > 0:\n        if not geom[\"is_locked\"] and geom[\"stable_start_time\"] > 0:\n            elapsed = time.time() * 1000 - geom[\"stable_start_time\"]\n            progress = min(100, round(elapsed / GEOMETRY_STABLE_TIME_MS * 100))\n            status = \"calibrating\"\n            message = f\"Learning geometry... {progress}%\"\n        else:\n            status = \"calibrating\"\n            message = \"Detecting fretboard...\"\n            progress = 0\n    elif state[\"nut_x\"] > 0:\n        status = \"calibrating\"\n        message = \"Looking for soundhole...\"\n        progress = 0\n    elif state[\"soundhole_x\"] > 0:\n        status = \"calibrating\"\n        message = \"Looking for headstock...\"\n        progress = 0\n    else:\n        status = \"calibrating\"\n        message = \"Position your guitar in frame\"\n        progress = 0\n\n    return {\n        \"status\": status,\n        \"message\": message,\n        \"progress\": progress,\n        \"max_frets_seen\": geom[\"max_frets_seen\"],\n        \"detected_fret_count\": len(state[\"detected_fret_positions\"]),\n        \"detected_nut_y\": dict(state[\"detected_nut_y\"]),\n        \"detected_fret_positions\": list(state[\"detected_fret_positions\"]),\n    }\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# BLOCK ENTRY POINTS (init + run)\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n_state = {\n    \"nut_x\": 0.0, \"nut_center_y\": 0.0,\n    \"soundhole_x\": 0.0, \"soundhole_center_y\": 0.0,\n    \"axis_angle\": 0.0, \"height_scale\": 1.0,\n    \"fret_positions\": [], \"detected_fret_positions\": [],\n    \"detected_nut_y\": {\"top\": 0.0, \"bottom\": 0.0},\n    \"is_valid\": False,\n    \"geometry\": {\n        \"nut_height\": 0.0, \"taper_ratio\": 0.75, \"fret_count\": 0,\n        \"fretboard_length\": 0.0, \"scale_length\": 0.0,\n        \"is_locked\": False, \"stable_start_time\": 0.0,\n        \"last_stable_fret_count\": 0, \"max_frets_seen\": 0, \"last_fret_x\": 0.0,\n    },\n}\n\ndef run(self, fret_wire_detections, landmark_detections):\n    global _state\n    state = _state\n\n    # Convert sv.Detections to dicts\n    fret_wire_dicts = sv_to_dicts(fret_wire_detections)\n    landmark_dicts = sv_to_dicts(landmark_detections)\n\n    prev_nut_x = state[\"nut_x\"]\n    prev_height_scale = state[\"height_scale\"]\n\n    detections = classify_detections(landmark_dicts, fret_wire_dicts)\n    axis_points = extract_anchors(state, detections)\n\n    if len(axis_points) >= 2:\n        angle = fit_line_angle(axis_points)\n        state[\"axis_angle\"] = smooth_value(state[\"axis_angle\"], angle, ANGLE_SMOOTHING)\n\n    geom = state[\"geometry\"]\n    if geom[\"is_locked\"] and state[\"nut_x\"] > 0 and geom[\"fretboard_length\"] > 0:\n        state[\"soundhole_x\"] = state[\"nut_x\"] - geom[\"fretboard_length\"] * math.cos(state[\"axis_angle\"])\n        state[\"soundhole_center_y\"] = state[\"nut_center_y\"] - geom[\"fretboard_length\"] * math.sin(\n            state[\"axis_angle\"]\n        )\n\n    update_scale_factor(state, prev_height_scale, detections[\"fret_wires\"])\n\n    frets = collect_detected_frets(detections[\"fret_wires\"], state[\"nut_x\"], state[\"soundhole_x\"])\n    state[\"detected_fret_positions\"] = frets\n\n    if not geom[\"is_locked\"]:\n        calibrate_geometry(state, detections, frets)\n    else:\n        update_locked_fret_positions(state, prev_nut_x, frets)\n\n    state[\"is_valid\"] = (\n        state[\"nut_x\"] > 0\n        and state[\"nut_center_y\"] > 0\n        and geom[\"is_locked\"]\n        and len(state[\"fret_positions\"]) > 0\n    )\n\n    calibration = _build_calibration_status(state)\n\n    return {\n        \"geometry_data\": {\n            \"is_valid\": state[\"is_valid\"],\n            \"nut_x\": state[\"nut_x\"],\n            \"nut_center_y\": state[\"nut_center_y\"],\n            \"soundhole_x\": state[\"soundhole_x\"],\n            \"soundhole_center_y\": state[\"soundhole_center_y\"],\n            \"axis_angle\": state[\"axis_angle\"],\n            \"height_scale\": state[\"height_scale\"],\n            \"nut_height\": geom[\"nut_height\"],\n            \"taper_ratio\": geom[\"taper_ratio\"],\n            \"fret_count\": geom[\"fret_count\"],\n            \"fretboard_length\": geom[\"fretboard_length\"],\n            \"fret_positions\": list(state[\"fret_positions\"]),\n            \"calibration\": calibration,\n        }\n    }",
+        "init_function_code": "def init(self) -> None:\n    pass"
+      }
+    },
+    {
+      "type": "DynamicBlockDefinition",
+      "manifest": {
+        "type": "ManifestDescription",
+        "block_type": "ScaleRenderer",
+        "inputs": {
+          "geometry_data": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "step_output"
+            ]
+          },
+          "image": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "input_image"
+            ]
+          },
+          "scale_name": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "input_parameter"
+            ],
+            "value_types": [
+              "string"
+            ]
+          },
+          "root_note": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "input_parameter"
+            ],
+            "value_types": [
+              "integer"
+            ]
+          },
+          "tuning": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "input_parameter"
+            ],
+            "value_types": [
+              "string"
+            ]
+          },
+          "fret_count": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "input_parameter"
+            ],
+            "value_types": [
+              "integer"
+            ]
+          }
+        },
+        "outputs": {
+          "annotated_image": {
+            "type": "DynamicOutputDefinition",
+            "kind": [
+              "image"
+            ]
+          }
+        }
+      },
+      "code": {
+        "type": "PythonCode",
+        "run_function_code": "import cv2\nimport numpy as np\nimport math\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# SCALE DEFINITIONS (10 scales)\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nSCALES = {\n    \"major\": {\"name\": \"Major\", \"intervals\": [0, 2, 4, 5, 7, 9, 11]},\n    \"minor\": {\"name\": \"Minor (Natural)\", \"intervals\": [0, 2, 3, 5, 7, 8, 10]},\n    \"pentatonicMajor\": {\"name\": \"Pentatonic Major\", \"intervals\": [0, 2, 4, 7, 9]},\n    \"pentatonicMinor\": {\"name\": \"Pentatonic Minor\", \"intervals\": [0, 3, 5, 7, 10]},\n    \"blues\": {\"name\": \"Blues\", \"intervals\": [0, 3, 5, 6, 7, 10]},\n    \"harmonicMinor\": {\"name\": \"Harmonic Minor\", \"intervals\": [0, 2, 3, 5, 7, 8, 11]},\n    \"melodicMinor\": {\"name\": \"Melodic Minor\", \"intervals\": [0, 2, 3, 5, 7, 9, 11]},\n    \"dorian\": {\"name\": \"Dorian\", \"intervals\": [0, 2, 3, 5, 7, 9, 10]},\n    \"mixolydian\": {\"name\": \"Mixolydian\", \"intervals\": [0, 2, 4, 5, 7, 9, 10]},\n    \"phrygian\": {\"name\": \"Phrygian\", \"intervals\": [0, 1, 3, 5, 7, 8, 10]},\n}\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# TUNING DEFINITIONS (7 tunings, MIDI note numbers)\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nTUNINGS = {\n    \"standard\": {\"name\": \"Standard (EADGBE)\", \"notes\": [40, 45, 50, 55, 59, 64]},\n    \"dropD\": {\"name\": \"Drop D (DADGBE)\", \"notes\": [38, 45, 50, 55, 59, 64]},\n    \"halfStepDown\": {\"name\": \"Half Step Down (Eb)\", \"notes\": [39, 44, 49, 54, 58, 63]},\n    \"fullStepDown\": {\"name\": \"Full Step Down (D)\", \"notes\": [38, 43, 48, 53, 57, 62]},\n    \"openG\": {\"name\": \"Open G (DGDGBD)\", \"notes\": [38, 43, 50, 55, 59, 62]},\n    \"openD\": {\"name\": \"Open D (DADF#AD)\", \"notes\": [38, 45, 50, 54, 57, 62]},\n    \"dadgad\": {\"name\": \"DADGAD\", \"notes\": [38, 45, 50, 55, 57, 62]},\n}\n\nNOTE_NAMES = [\"C\", \"C#\", \"D\", \"D#\", \"E\", \"F\", \"F#\", \"G\", \"G#\", \"A\", \"A#\", \"B\"]\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# RENDERING CONSTANTS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n# Colors in BGR for cv2\nROOT_NOTE_COLOR = (107, 107, 255)  # #FF6B6B in BGR\nSCALE_NOTE_COLOR = (206, 255, 0)   # #00FFCE in BGR\nWHITE = (255, 255, 255)\nYELLOW = (0, 215, 255)             # #FFD700 in BGR\nCYAN = (206, 255, 0)               # #00FFCE in BGR\nRED = (107, 107, 255)              # #FF6B6B in BGR\nGRAY = (136, 136, 136)\nBLACK_OVERLAY = (0, 0, 0)\n\nNOTE_RADIUS = 14\nFONT = cv2.FONT_HERSHEY_SIMPLEX\nFONT_SCALE_NOTE = 0.4\nFONT_SCALE_STATUS = 0.6\nFONT_SCALE_SUB = 0.45\nFONT_SCALE_FRET = 0.4\nFONT_SCALE_LABEL = 0.35\n\n# Geometry constants\nSTRING_SPREAD_MARGIN = 0.9\nANGLE_SPREAD_FACTOR = 0.5\nFRET_RATIO = 2 ** (-1 / 12)\n\nMARKER_FRETS = [3, 5, 7, 9, 12, 15, 17, 19, 21, 24]\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# MUSIC THEORY HELPERS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef get_note_name(midi_note):\n    return NOTE_NAMES[midi_note % 12]\n\n\ndef is_note_in_scale(midi_note, root_note, intervals):\n    interval = ((midi_note - root_note) % 12 + 12) % 12\n    return interval in intervals\n\n\ndef is_root_note(midi_note, root_note):\n    return midi_note % 12 == root_note % 12\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# GEOMETRY HELPERS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef get_height_at_x(geom, nut_x, soundhole_x, x):\n    \"\"\"Get fretboard height at a given X position (linear taper).\"\"\"\n    nut_height = geom[\"nut_height\"]\n    if nut_height == 0:\n        return 50\n\n    fretboard_length = nut_x - soundhole_x\n    if fretboard_length <= 0:\n        return nut_height\n\n    t = max(0, min(1, (nut_x - x) / fretboard_length))\n    return nut_height * (1 - t * (1 - geom[\"taper_ratio\"]))\n\n\ndef get_string_position(geom, string_index, string_count, fret_x):\n    \"\"\"Calculate string position at a given fret X, accounting for perspective.\"\"\"\n    nut_x = geom[\"nut_x\"]\n    nut_center_y = geom[\"nut_center_y\"]\n    soundhole_x = geom[\"soundhole_x\"]\n    axis_angle = geom[\"axis_angle\"]\n    height_scale = geom[\"height_scale\"]\n\n    # Center point following axis angle\n    dx = fret_x - nut_x\n    center_y = nut_center_y + dx * math.tan(axis_angle)\n\n    # Width at this position, scaled\n    base_width = get_height_at_x(geom, nut_x, soundhole_x, fret_x)\n    scaled_width = base_width * height_scale * STRING_SPREAD_MARGIN\n    half_width = scaled_width / 2\n\n    # String position within width\n    t = string_index / (string_count - 1) if string_count > 1 else 0.5\n    offset = -half_width + t * scaled_width\n\n    # Apply axis angle spread\n    effective_angle = axis_angle * ANGLE_SPREAD_FACTOR\n    perp_x = -math.sin(effective_angle) * offset\n    perp_y = math.cos(effective_angle) * offset\n\n    return {\"x\": fret_x + perp_x, \"y\": center_y + perp_y}\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# NOTE POSITION CALCULATION\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef calculate_note_positions(geom, tuning_key, fret_count_display):\n    \"\"\"Calculate pixel positions for all notes on the fretboard.\"\"\"\n    tuning = TUNINGS.get(tuning_key)\n    if not tuning:\n        return []\n\n    fret_positions = geom[\"fret_positions\"]\n    nut_x = geom[\"nut_x\"]\n    string_count = len(tuning[\"notes\"])\n    positions = []\n\n    for string_idx in range(string_count):\n        open_note = tuning[\"notes\"][string_idx]\n\n        # Open string at nut\n        nut_pos = get_string_position(geom, string_idx, string_count, nut_x)\n        positions.append({\n            \"string\": string_idx + 1,\n            \"fret\": 0,\n            \"x\": nut_pos[\"x\"],\n            \"y\": nut_pos[\"y\"],\n            \"note\": open_note,\n        })\n\n        # Fretted notes\n        max_fret = min(fret_count_display, len(fret_positions))\n        for fret in range(1, max_fret + 1):\n            prev_fret_x = nut_x if fret == 1 else fret_positions[fret - 2]\n            mid_fret_x = (prev_fret_x + fret_positions[fret - 1]) / 2\n            note_pos = get_string_position(geom, string_idx, string_count, mid_fret_x)\n            positions.append({\n                \"string\": string_idx + 1,\n                \"fret\": fret,\n                \"x\": note_pos[\"x\"],\n                \"y\": note_pos[\"y\"],\n                \"note\": open_note + fret,\n            })\n\n    return positions\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# RENDERING FUNCTIONS\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef draw_note_marker(frame, x, y, note_name, color, is_root, w):\n    \"\"\"Draw a note circle with text at the given position.\"\"\"\n    mx = int(w - x)  # Mirror X\n    my = int(y)\n\n    # Semi-transparent circle using overlay\n    overlay = frame.copy()\n    cv2.circle(overlay, (mx, my), NOTE_RADIUS, color, -1)\n    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)\n\n    # White border for root notes\n    if is_root:\n        cv2.circle(frame, (mx, my), NOTE_RADIUS, WHITE, 2, cv2.LINE_AA)\n\n    # Note name text\n    text_size = cv2.getTextSize(note_name, FONT, FONT_SCALE_NOTE, 1)[0]\n    text_x = mx - text_size[0] // 2\n    text_y = my + text_size[1] // 2\n    cv2.putText(frame, note_name, (text_x, text_y), FONT, FONT_SCALE_NOTE, WHITE, 1, cv2.LINE_AA)\n\n\ndef render_scale_notes(frame, note_positions, scale_intervals, root_note):\n    \"\"\"Draw scale notes on the frame.\"\"\"\n    h, w = frame.shape[:2]\n\n    for pos in note_positions:\n        if not is_note_in_scale(pos[\"note\"], root_note, scale_intervals):\n            continue\n\n        is_root = is_root_note(pos[\"note\"], root_note)\n        color = ROOT_NOTE_COLOR if is_root else SCALE_NOTE_COLOR\n        note_name = get_note_name(pos[\"note\"])\n        draw_note_marker(frame, pos[\"x\"], pos[\"y\"], note_name, color, is_root, w)\n\n\ndef render_fret_markers(frame, geom, fret_count_display):\n    \"\"\"Draw fret numbers at standard marker positions.\"\"\"\n    fret_positions = geom[\"fret_positions\"]\n    nut_x = geom[\"nut_x\"]\n    nut_center_y = geom[\"nut_center_y\"]\n    nut_height = geom[\"nut_height\"]\n    h, w = frame.shape[:2]\n\n    if not fret_positions:\n        return\n\n    label_y = int(nut_center_y + nut_height / 2 + 25)\n\n    for fret in range(1, min(fret_count_display, len(fret_positions)) + 1):\n        if fret not in MARKER_FRETS:\n            continue\n\n        fret_x = fret_positions[fret - 1]\n        prev_fret_x = nut_x if fret == 1 else fret_positions[fret - 2]\n        center_x = (fret_x + prev_fret_x) / 2\n\n        mx = int(w - center_x)  # Mirror X\n        text = str(fret)\n        text_size = cv2.getTextSize(text, FONT, FONT_SCALE_FRET, 1)[0]\n        cv2.putText(frame, text, (mx - text_size[0] // 2, label_y), FONT, FONT_SCALE_FRET, GRAY, 1, cv2.LINE_AA)\n\n\ndef render_calibration(frame, calibration, geom):\n    \"\"\"Draw calibration visuals: landmarks + status message.\"\"\"\n    h, w = frame.shape[:2]\n\n    nut_x = geom[\"nut_x\"]\n    nut_center_y = geom[\"nut_center_y\"]\n    soundhole_x = geom[\"soundhole_x\"]\n    soundhole_center_y = geom[\"soundhole_center_y\"]\n    detected_nut_y = calibration[\"detected_nut_y\"]\n    detected_frets = calibration[\"detected_fret_positions\"]\n\n    # Draw detected nut (red vertical line)\n    if nut_x > 0 and detected_nut_y[\"top\"] != detected_nut_y[\"bottom\"]:\n        mx = int(w - nut_x)\n        top = int(detected_nut_y[\"top\"])\n        bottom = int(detected_nut_y[\"bottom\"])\n        cv2.line(frame, (mx, top), (mx, bottom), RED, 3, cv2.LINE_AA)\n\n        # Label\n        text_size = cv2.getTextSize(\"FRET 0\", FONT, FONT_SCALE_LABEL, 1)[0]\n        cv2.putText(frame, \"FRET 0\", (mx - text_size[0] // 2, top - 8), FONT, FONT_SCALE_LABEL, RED, 1, cv2.LINE_AA)\n\n    # Draw detected fret wires (yellow vertical lines)\n    if detected_frets and detected_nut_y[\"top\"] != detected_nut_y[\"bottom\"]:\n        fret_height = detected_nut_y[\"bottom\"] - detected_nut_y[\"top\"]\n        half_h = fret_height / 2\n\n        for i, fret_x in enumerate(detected_frets):\n            mx = int(w - fret_x)\n            top = int(nut_center_y - half_h)\n            bottom = int(nut_center_y + half_h)\n            cv2.line(frame, (mx, top), (mx, bottom), YELLOW, 2, cv2.LINE_AA)\n\n            # Fret number label\n            text = str(i + 1)\n            text_size = cv2.getTextSize(text, FONT, FONT_SCALE_LABEL, 1)[0]\n            cv2.putText(frame, text, (mx - text_size[0] // 2, top - 8), FONT, FONT_SCALE_LABEL, YELLOW, 1, cv2.LINE_AA)\n\n    # Draw detected soundhole (cyan circle)\n    if soundhole_x > 0:\n        mx = int(w - soundhole_x)\n        my = int(soundhole_center_y)\n        cv2.circle(frame, (mx, my), 20, CYAN, 2, cv2.LINE_AA)\n\n        text_size = cv2.getTextSize(\"BODY\", FONT, FONT_SCALE_LABEL, 1)[0]\n        cv2.putText(frame, \"BODY\", (mx - text_size[0] // 2, my - 30), FONT, FONT_SCALE_LABEL, CYAN, 1, cv2.LINE_AA)\n\n    # Draw status banner\n    overlay = frame.copy()\n    cv2.rectangle(overlay, (0, 0), (w, 80), BLACK_OVERLAY, -1)\n    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)\n\n    message = calibration[\"message\"]\n    text_size = cv2.getTextSize(message, FONT, FONT_SCALE_STATUS, 1)[0]\n    cv2.putText(frame, message, (w // 2 - text_size[0] // 2, 35), FONT, FONT_SCALE_STATUS, WHITE, 1, cv2.LINE_AA)\n\n    # Sub-message with fret count\n    sub = \"\"\n    if geom[\"nut_x\"] > 0 and geom[\"soundhole_x\"] > 0:\n        sub = f\"Frets: {calibration['max_frets_seen']} - Hold still\"\n    elif geom[\"nut_x\"] > 0:\n        sub = f\"Frets: {calibration['detected_fret_count']} - Show guitar body\"\n    elif geom[\"soundhole_x\"] > 0:\n        sub = \"Show the headstock area\"\n\n    if sub:\n        text_size = cv2.getTextSize(sub, FONT, FONT_SCALE_SUB, 1)[0]\n        cv2.putText(frame, sub, (w // 2 - text_size[0] // 2, 60), FONT, FONT_SCALE_SUB, GRAY, 1, cv2.LINE_AA)\n\n    # Draw legend\n    legend_x = w - 175\n    overlay2 = frame.copy()\n    cv2.rectangle(overlay2, (legend_x - 5, 5), (w - 5, 40), BLACK_OVERLAY, -1)\n    cv2.addWeighted(overlay2, 0.6, frame, 0.4, 0, frame)\n\n    # Yellow = Detected\n    cv2.line(frame, (legend_x, 17), (legend_x + 20, 17), YELLOW, 3)\n    cv2.putText(frame, \"Detected\", (legend_x + 25, 20), FONT, FONT_SCALE_LABEL, WHITE, 1, cv2.LINE_AA)\n\n\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n# MAIN ENTRY POINT\n# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\ndef run(self, geometry_data, image, scale_name, root_note, tuning, fret_count):\n    frame = image.numpy_image.copy() if hasattr(image, \"numpy_image\") else image.copy()\n\n    is_valid = geometry_data.get(\"is_valid\", False)\n    calibration = geometry_data.get(\"calibration\", {})\n\n    if not is_valid:\n        # Render calibration visuals\n        render_calibration(frame, calibration, geometry_data)\n        return {\"annotated_image\": WorkflowImageData(parent_metadata=image.parent_metadata, numpy_image=frame)}\n\n    # Calculate note positions\n    note_positions = calculate_note_positions(geometry_data, tuning, fret_count)\n\n    # Get scale intervals\n    scale = SCALES.get(scale_name, SCALES[\"major\"])\n    intervals = scale[\"intervals\"]\n\n    # Render fret markers\n    render_fret_markers(frame, geometry_data, fret_count)\n\n    # Render scale notes\n    render_scale_notes(frame, note_positions, intervals, root_note)\n\n    return {\"annotated_image\": WorkflowImageData(parent_metadata=image.parent_metadata, numpy_image=frame)}",
+        "init_function_code": "def init(self) -> None:\n    pass"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "type": "roboflow_core/roboflow_instance_segmentation_model@v2",
+      "name": "segmentation_model",
+      "images": "$inputs.image",
+      "model_id": "visionary-guitar/8"
+    },
+    {
+      "type": "roboflow_core/byte_tracker@v3",
+      "name": "tracker",
+      "image": "$inputs.image",
+      "detections": "$steps.segmentation_model.predictions",
+      "track_activation_threshold": 0.5,
+      "lost_track_buffer": 15,
+      "minimum_matching_threshold": 0.8,
+      "minimum_consecutive_frames": 1
+    },
+    {
+      "type": "roboflow_core/stabilize_detections@v1",
+      "name": "stabilizer",
+      "image": "$inputs.image",
+      "detections": "$steps.tracker.tracked_detections",
+      "smoothing_window_size": 5,
+      "bbox_smoothing_coefficient": 0.4
+    },
+    {
+      "type": "roboflow_core/detections_filter@v1",
+      "name": "filter_fret_wires",
+      "predictions": "$steps.stabilizer.tracked_detections",
+      "operations": [
+        {
+          "type": "DetectionsFilter",
+          "filter_operation": {
+            "type": "StatementGroup",
+            "statements": [
+              {
+                "type": "BinaryStatement",
+                "left_operand": {
+                  "type": "DynamicOperand",
+                  "operations": [
+                    {
+                      "type": "ExtractDetectionProperty",
+                      "property_name": "class_name"
+                    }
+                  ]
+                },
+                "comparator": {
+                  "type": "=="
+                },
+                "right_operand": {
+                  "type": "DynamicOperand",
+                  "operand_name": "class_val"
+                }
+              },
+              {
+                "type": "BinaryStatement",
+                "left_operand": {
+                  "type": "DynamicOperand",
+                  "operations": [
+                    {
+                      "type": "ExtractDetectionProperty",
+                      "property_name": "confidence"
+                    }
+                  ]
+                },
+                "comparator": {
+                  "type": "(Number) >="
+                },
+                "right_operand": {
+                  "type": "DynamicOperand",
+                  "operand_name": "conf_min"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "operations_parameters": {
+        "class_val": "$inputs.fret_wire_class",
+        "conf_min": "$inputs.fret_wire_conf"
+      }
+    },
+    {
+      "type": "roboflow_core/detections_filter@v1",
+      "name": "filter_landmarks",
+      "predictions": "$steps.stabilizer.tracked_detections",
+      "operations": [
+        {
+          "type": "DetectionsFilter",
+          "filter_operation": {
+            "type": "StatementGroup",
+            "statements": [
+              {
+                "type": "BinaryStatement",
+                "left_operand": {
+                  "type": "DynamicOperand",
+                  "operations": [
+                    {
+                      "type": "ExtractDetectionProperty",
+                      "property_name": "class_name"
+                    }
+                  ]
+                },
+                "comparator": {
+                  "type": "in (Sequence)"
+                },
+                "right_operand": {
+                  "type": "DynamicOperand",
+                  "operand_name": "allowed_classes"
+                }
+              },
+              {
+                "type": "BinaryStatement",
+                "left_operand": {
+                  "type": "DynamicOperand",
+                  "operations": [
+                    {
+                      "type": "ExtractDetectionProperty",
+                      "property_name": "confidence"
+                    }
+                  ]
+                },
+                "comparator": {
+                  "type": "(Number) >="
+                },
+                "right_operand": {
+                  "type": "DynamicOperand",
+                  "operand_name": "conf_min"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "operations_parameters": {
+        "allowed_classes": "$inputs.landmark_classes",
+        "conf_min": "$inputs.landmark_conf"
+      }
+    },
+    {
+      "type": "GeometryEngine",
+      "name": "geometry_engine",
+      "fret_wire_detections": "$steps.filter_fret_wires.predictions",
+      "landmark_detections": "$steps.filter_landmarks.predictions"
+    },
+    {
+      "type": "ScaleRenderer",
+      "name": "scale_renderer",
+      "geometry_data": "$steps.geometry_engine.geometry_data",
+      "image": "$inputs.image",
+      "scale_name": "$inputs.scale_name",
+      "root_note": "$inputs.root_note",
+      "tuning": "$inputs.tuning",
+      "fret_count": "$inputs.fret_count"
+    }
+  ],
+  "outputs": [
+    {
+      "type": "JsonField",
+      "name": "annotated_image",
+      "selector": "$steps.scale_renderer.annotated_image"
+    }
+  ]
+}
