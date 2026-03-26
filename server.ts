@@ -4,7 +4,7 @@ import { join } from 'path';
 import { InferenceHTTPClient } from '@roboflow/inference-sdk';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5189;
 
 app.use(express.json());
 
