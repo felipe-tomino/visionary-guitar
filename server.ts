@@ -4,7 +4,7 @@ import { join } from 'path';
 import { InferenceHTTPClient } from '@roboflow/inference-sdk';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5189;
 
 app.use(express.json());
 
@@ -28,6 +28,7 @@ app.post('/api/init-webrtc', async (req, res) => {
 
     const answer = await client.initializeWebrtcWorker({
       offer,
+      workflowSpec: wrtcParams.workflowSpec,
       workspaceName: wrtcParams.workspaceName,
       workflowId: wrtcParams.workflowId,
       config: {

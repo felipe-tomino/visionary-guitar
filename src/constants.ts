@@ -7,6 +7,6 @@ export const MAX_FRET_COUNT = 24;
 
 // Roboflow configuration
 export const ROBOFLOW_WORKSPACE = 'tominoprod';
-export const ROBOFLOW_WORKFLOW_ID = 'guitar-scales';
+export const ROBOFLOW_WORKFLOW_ID = 'guitar-full-workflow';
 export const ROBOFLOW_WORKFLOW_ID_LEGACY = 'guitar-predictions';
 export const API_PROXY_URL = '/api/init-webrtc';
